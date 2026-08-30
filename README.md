@@ -102,7 +102,8 @@ Every release includes an architecture-labelled ZIP and SHA-256 checksum. The
 tag-driven workflow creates a draft first, so its generated notes and artifacts
 can be inspected before publication. Until Apple Developer credentials are
 configured, those downloads are ad-hoc signed and macOS requires a one-time
-right-click → **Open** confirmation.
+right-click → **Open** confirmation. Version history is recorded in
+[CHANGELOG.md](CHANGELOG.md).
 
 Requirements: macOS 26+, Xcode 26, and Swift 6.2.
 
