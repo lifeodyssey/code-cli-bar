@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import XCTest
 @testable import VibeBarCore
 
@@ -106,7 +107,12 @@ final class PrivacyPersistenceTests: XCTestCase {
             model: "gpt-5",
             input: 1,
             output: 2,
-            cache: 3
+            cache: 3,
+            sessionId: "raw-session-id",
+            messageId: "raw-message-id",
+            requestId: "raw-request-id",
+            sourceKey: "raw-source-key",
+            projectPath: "/Users/example/private-project"
         )
 
         cache.store([event], for: path, mtime: mtime, size: 123)
@@ -121,7 +127,17 @@ final class PrivacyPersistenceTests: XCTestCase {
         let json = String(decoding: data, as: UTF8.self)
         XCTAssertFalse(json.contains("/Users/example"))
         XCTAssertFalse(json.contains("private-project"))
+        XCTAssertFalse(json.contains("raw-session-id"))
+        XCTAssertFalse(json.contains("raw-message-id"))
+        XCTAssertFalse(json.contains("raw-request-id"))
+        XCTAssertFalse(json.contains("raw-source-key"))
         XCTAssertEqual(cache.reusable(for: path, mtime: mtime, size: 123)?.count, 1)
+        let stored = try XCTUnwrap(cache.reusable(for: path, mtime: mtime, size: 123)?.first)
+        XCTAssertTrue(stored.sessionId?.hasPrefix("session-v1-") == true)
+        XCTAssertTrue(stored.messageId?.hasPrefix("message-v1-") == true)
+        XCTAssertTrue(stored.requestId?.hasPrefix("request-v1-") == true)
+        XCTAssertTrue(stored.sourceKey?.hasPrefix("source-v1-") == true)
+        XCTAssertNil(stored.projectPath)
     }
 
     func testScanCacheMigratesLegacyPlainPathKeyOnReuse() {
@@ -133,5 +149,94 @@ final class PrivacyPersistenceTests: XCTestCase {
         XCTAssertNotNil(cache.reusable(for: path, mtime: mtime, size: 456))
         XCTAssertNil(cache.entries[path])
         XCTAssertNotNil(cache.entries[CostUsageScanCache.entryKey(for: path)])
+    }
+
+    func testUsageLedgerPersistsOpaqueIdentifiersAndNoProjectPath() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CodeCLIBarLedgerPrivacy-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("usage.sqlite3")
+        let ledger = try UsageEventLedger(url: url)
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let event = CostUsageScanCache.ParsedEvent(
+            date: date,
+            model: "claude-sonnet-4-5",
+            input: 10,
+            output: 2,
+            cache: 0,
+            sessionId: "raw-session-id",
+            messageId: "raw-message-id",
+            requestId: "raw-request-id",
+            sourceKey: "raw-source-key",
+            harness: .claudeCode,
+            projectPath: "/Users/example/private-project"
+        )
+        try await ledger.ingest(UsageEventFileBatch(
+            tool: .claude,
+            filePath: "/Users/example/private-project/session.jsonl",
+            mtime: date,
+            size: 100,
+            events: [PricedUsageEvent(event: event, costUSD: 0.01)]
+        ))
+
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READONLY, nil), SQLITE_OK)
+        defer { if let database { sqlite3_close(database) } }
+        var statement: OpaquePointer?
+        XCTAssertEqual(
+            sqlite3_prepare_v2(
+                database,
+                "SELECT project, session_id, message_id, request_id, source_key FROM usage_events LIMIT 1",
+                -1,
+                &statement,
+                nil
+            ),
+            SQLITE_OK
+        )
+        defer { if let statement { sqlite3_finalize(statement) } }
+        XCTAssertEqual(sqlite3_step(statement), SQLITE_ROW)
+        XCTAssertEqual(sqlite3_column_type(statement, 0), SQLITE_NULL)
+        let session = String(cString: try XCTUnwrap(sqlite3_column_text(statement, 1)))
+        let message = String(cString: try XCTUnwrap(sqlite3_column_text(statement, 2)))
+        let request = String(cString: try XCTUnwrap(sqlite3_column_text(statement, 3)))
+        let source = String(cString: try XCTUnwrap(sqlite3_column_text(statement, 4)))
+        XCTAssertTrue(session.hasPrefix("session-v1-"))
+        XCTAssertTrue(message.hasPrefix("message-v1-"))
+        XCTAssertTrue(request.hasPrefix("request-v1-"))
+        XCTAssertTrue(source.hasPrefix("source-v1-"))
+    }
+
+    func testUsageLedgerRestrictsMainAndSidecarPermissions() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CodeCLIBarLedgerPermissions-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("usage.sqlite3")
+        let ledger = try UsageEventLedger(url: url)
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let event = CostUsageScanCache.ParsedEvent(
+            date: date,
+            model: "gpt-5",
+            input: 10,
+            output: 2,
+            cache: 0
+        )
+        try await ledger.ingest(UsageEventFileBatch(
+            tool: .codex,
+            filePath: "/Users/example/.codex/sessions/private.jsonl",
+            mtime: date,
+            size: 100,
+            events: [PricedUsageEvent(event: event, costUSD: 0.01)]
+        ))
+
+        for suffix in ["", "-wal", "-shm"] {
+            let path = url.path + suffix
+            XCTAssertTrue(FileManager.default.fileExists(atPath: path), "Missing SQLite file \(path)")
+            let attributes = try FileManager.default.attributesOfItem(atPath: path)
+            let permissions = try XCTUnwrap(attributes[.posixPermissions] as? NSNumber)
+            XCTAssertEqual(permissions.intValue & 0o777, 0o600, "Unsafe permissions for \(path)")
+        }
+        _ = await ledger.contentRevision()
     }
 }

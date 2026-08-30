@@ -2,16 +2,18 @@ import Foundation
 
 /// OpenCode Go usage adapter.
 ///
-/// Auth: the `auth` / `__Host-auth` cookies from `opencode.ai`.
-/// Workspace can be set in Misc settings, passed as a full
-/// `/workspace/wrk_.../go` URL, or discovered from OpenCode's server
-/// function endpoint.
+/// Preferred auth: the dedicated `opencode-go` key from OpenCode's native
+/// auth store. Browser cookies and workspace-page parsing remain available as
+/// a compatibility fallback.
 public struct OpenCodeGoQuotaAdapter: QuotaAdapter {
     public let tool: ToolType = .openCodeGo
 
     private let session: URLSession
     private let environment: [String: String]
     private let now: @Sendable () -> Date
+    private let credentialResolver: @Sendable () throws -> OpenCodeGoCredential
+
+    private static let nativeUsageEndpoint = URL(string: "https://opencode.ai/zen/go/v1/usage")!
 
     public static let cookieSpec = MiscCookieResolver.Spec(
         tool: .openCodeGo,
@@ -23,18 +25,36 @@ public struct OpenCodeGoQuotaAdapter: QuotaAdapter {
     public init(
         session: URLSession = .shared,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        credentialResolver: (@Sendable () throws -> OpenCodeGoCredential)? = nil
     ) {
         self.session = session
         self.environment = environment
         self.now = now
+        self.credentialResolver = credentialResolver ?? {
+            try OpenCodeGoCredentialReader.load()
+        }
     }
 
     public func fetch(for account: AccountIdentity) async throws -> AccountQuota {
-        let resolutions = MiscCookieResolver.resolveAll(for: Self.cookieSpec, account: account)
-        guard !resolutions.isEmpty else { throw QuotaError.noCredential }
-
         let queriedAt = now()
+        var nativeError: QuotaError?
+        do {
+            let credential = try credentialResolver()
+            return try await fetchWithNativeCredential(
+                credential,
+                account: account,
+                queriedAt: queriedAt
+            )
+        } catch let error as QuotaError {
+            nativeError = error
+        } catch {
+            nativeError = .noCredential
+        }
+
+        let resolutions = MiscCookieResolver.resolveAll(for: Self.cookieSpec, account: account)
+        guard !resolutions.isEmpty else { throw nativeError ?? QuotaError.noCredential }
+
         let results = await MiscCookieAutoImporter.shared.gatherSlotResults(
             spec: Self.cookieSpec,
             account: account,
@@ -47,6 +67,30 @@ public struct OpenCodeGoQuotaAdapter: QuotaAdapter {
             account: account,
             results: results,
             queriedAt: queriedAt
+        )
+    }
+
+    private func fetchWithNativeCredential(
+        _ credential: OpenCodeGoCredential,
+        account: AccountIdentity,
+        queriedAt: Date
+    ) async throws -> AccountQuota {
+        var request = URLRequest(url: Self.nativeUsageEndpoint)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 15
+        request.setValue("Bearer \(credential.apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let text = try await fetchText(request)
+        let snapshot = try OpenCodeGoResponseParser.parse(text: text, now: queriedAt)
+        return AccountQuota(
+            accountId: account.id,
+            tool: .openCodeGo,
+            buckets: snapshot.buckets,
+            plan: account.plan,
+            email: account.email,
+            queriedAt: queriedAt,
+            error: nil
         )
     }
 
@@ -185,6 +229,11 @@ enum OpenCodeGoResponseParser {
         var buckets: [QuotaBucket]
     }
 
+    private struct ParsedWindow {
+        var percent: Double
+        var resetAt: Date?
+    }
+
     static func parse(text: String, now: Date) throws -> Snapshot {
         if let snapshot = parseJSON(text: text, now: now) {
             return snapshot
@@ -199,10 +248,20 @@ enum OpenCodeGoResponseParser {
         let monthlyPercent = extractDouble(pattern: #"monthlyUsage[^}]*?usagePercent\s*:\s*([0-9]+(?:\.[0-9]+)?)"#, text: text)
         let monthlyReset = extractInt(pattern: #"monthlyUsage[^}]*?resetInSec\s*:\s*([0-9]+)"#, text: text)
         return buildSnapshot(
-            rolling: (rollingPercent, rollingReset),
-            weekly: (weeklyPercent, weeklyReset),
-            monthly: monthlyPercent.map { ($0, monthlyReset ?? 0) },
-            now: now
+            rolling: ParsedWindow(
+                percent: rollingPercent,
+                resetAt: rollingPercent == 0 ? nil : now.addingTimeInterval(TimeInterval(rollingReset))
+            ),
+            weekly: ParsedWindow(
+                percent: weeklyPercent,
+                resetAt: weeklyPercent == 0 ? nil : now.addingTimeInterval(TimeInterval(weeklyReset))
+            ),
+            monthly: monthlyPercent.map {
+                ParsedWindow(
+                    percent: $0,
+                    resetAt: $0 == 0 ? nil : monthlyReset.map { now.addingTimeInterval(TimeInterval($0)) }
+                )
+            }
         )
     }
 
@@ -283,12 +342,11 @@ enum OpenCodeGoResponseParser {
         return buildSnapshot(
             rolling: rollingWindow,
             weekly: weeklyWindow,
-            monthly: monthly.flatMap { parseWindow($0, now: now) },
-            now: now
+            monthly: monthly.flatMap { parseWindow($0, now: now) }
         )
     }
 
-    private static func parseWindow(_ dict: [String: Any], now: Date) -> (Double, Int)? {
+    private static func parseWindow(_ dict: [String: Any], now: Date) -> ParsedWindow? {
         let percentKeys = ["usagePercent", "usedPercent", "percentUsed", "percent", "usage_percent", "used_percent", "utilization", "utilizationPercent", "utilization_percent", "usage"]
         let resetInKeys = ["resetInSec", "resetInSeconds", "resetSeconds", "reset_sec", "reset_in_sec", "resetsInSec", "resetsInSeconds", "resetIn", "resetSec"]
         let resetAtKeys = ["resetAt", "resetsAt", "reset_at", "resets_at", "nextReset", "next_reset", "renewAt", "renew_at"]
@@ -301,33 +359,39 @@ enum OpenCodeGoResponseParser {
         }
         guard var resolvedPercent = percent else { return nil }
         if resolvedPercent <= 1, resolvedPercent >= 0 { resolvedPercent *= 100 }
-        let resetIn = firstInt(forKeys: resetInKeys, in: dict)
-            ?? firstDate(forKeys: resetAtKeys, in: dict).map { max(0, Int($0.timeIntervalSince(now))) }
-            ?? 0
-        return (max(0, min(100, resolvedPercent)), resetIn)
+        resolvedPercent = max(0, min(100, resolvedPercent))
+        let resetAt = firstInt(forKeys: resetInKeys, in: dict)
+            .map { now.addingTimeInterval(TimeInterval(max(0, $0))) }
+            ?? firstDate(forKeys: resetAtKeys, in: dict)
+        return ParsedWindow(
+            percent: resolvedPercent,
+            // OpenCode currently emits now + window placeholders before a
+            // quota cycle has started. At 0% that is not a trustworthy plan
+            // anchor, so keep utilization while withholding the fake reset.
+            resetAt: resolvedPercent == 0 ? nil : resetAt
+        )
     }
 
     private static func buildSnapshot(
-        rolling: (Double, Int),
-        weekly: (Double, Int),
-        monthly: (Double, Int)?,
-        now: Date
+        rolling: ParsedWindow,
+        weekly: ParsedWindow,
+        monthly: ParsedWindow?
     ) -> Snapshot {
         var buckets = [
             QuotaBucket(
                 id: "opencodego.rolling",
                 title: "5 Hours",
                 shortLabel: "5h",
-                usedPercent: rolling.0,
-                resetAt: now.addingTimeInterval(TimeInterval(rolling.1)),
+                usedPercent: rolling.percent,
+                resetAt: rolling.resetAt,
                 rawWindowSeconds: 5 * 3600
             ),
             QuotaBucket(
                 id: "opencodego.weekly",
                 title: "Weekly",
                 shortLabel: "Wk",
-                usedPercent: weekly.0,
-                resetAt: now.addingTimeInterval(TimeInterval(weekly.1)),
+                usedPercent: weekly.percent,
+                resetAt: weekly.resetAt,
                 rawWindowSeconds: 7 * 86_400
             )
         ]
@@ -336,8 +400,8 @@ enum OpenCodeGoResponseParser {
                 id: "opencodego.monthly",
                 title: "Monthly",
                 shortLabel: "Month",
-                usedPercent: monthly.0,
-                resetAt: now.addingTimeInterval(TimeInterval(monthly.1)),
+                usedPercent: monthly.percent,
+                resetAt: monthly.resetAt,
                 rawWindowSeconds: 30 * 86_400
             ))
         }

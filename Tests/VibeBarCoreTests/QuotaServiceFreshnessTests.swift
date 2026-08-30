@@ -97,6 +97,34 @@ final class QuotaServiceFreshnessTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(attempted, queriedAt)
     }
 
+    func testCurrentCachedQuotaNeverReturnsAnExpiredSnapshot() async {
+        let account = AccountIdentity(id: "freshness-current-gate", tool: .claude, source: .oauthCLI)
+        let queriedAt = Date().addingTimeInterval(-3 * 86_400)
+        let service = QuotaService(
+            adapters: [.claude: FreshnessSequenceAdapter(results: [
+                .success(AccountQuota(
+                    accountId: account.id,
+                    tool: .claude,
+                    buckets: [QuotaBucket(
+                        id: "weekly",
+                        title: "Weekly",
+                        shortLabel: "Weekly",
+                        usedPercent: 81,
+                        resetAt: Date().addingTimeInterval(12 * 3_600),
+                        rawWindowSeconds: 604_800
+                    )],
+                    queriedAt: queriedAt
+                ))
+            ])],
+            mockProvider: { false }
+        )
+
+        _ = await service.refresh(account)
+
+        XCTAssertNotNil(service.cachedQuota(for: account.id))
+        XCTAssertNil(service.currentCachedQuota(for: account.id, maxAge: 1_200))
+    }
+
     func testErrorBearingQuotaPreservesTheLastSuccessfulCache() async throws {
         let account = AccountIdentity(id: "embedded-error-cache", tool: .kimi, source: .browserCookie)
         let queriedAt = Date().addingTimeInterval(-8 * 3_600)

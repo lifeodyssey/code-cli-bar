@@ -542,6 +542,7 @@ func providerTitle(for tool: ToolType) -> String {
     case .volcengineAgentPlan: return "DOUBAO AP"
     case .baiduQianfan: return "QIANFAN"
     case .openCodeGo:  return "OPENCODE"
+    case .dsh:         return "DSH"
     case .kilo:        return "KILO"
     case .kiro:        return "KIRO"
     case .ollama:      return "OLLAMA"

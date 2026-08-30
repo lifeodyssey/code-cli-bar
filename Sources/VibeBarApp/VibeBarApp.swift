@@ -7,8 +7,10 @@ struct VibeBarApp: App {
 
     var body: some Scene {
         Settings {
-            // Keep an empty scene so SwiftUI doesn't insist on a window.
-            EmptyView()
+            CompactSettingsRoot(environment: appDelegate.environment)
+                .environmentObject(appDelegate.environment)
+                .environmentObject(appDelegate.environment.quotaService)
         }
+        .defaultSize(width: 660, height: 650)
     }
 }

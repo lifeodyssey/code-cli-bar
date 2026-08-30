@@ -93,6 +93,28 @@ public struct QuotaBucket: Codable, Identifiable, Hashable, Sendable {
         max(0.0, min(100.0, 100.0 - usedPercent))
     }
 
+    /// A compact but unambiguous label for flat quota lists. Providers can
+    /// expose an aggregate `Weekly` bucket alongside model-scoped weekly
+    /// buckets; using `title` alone makes those distinct limits look like
+    /// duplicates. Prefer the parser's concise scoped label when it already
+    /// includes the window, otherwise qualify the title with its group.
+    public var compactDetailTitle: String {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let rawGroup = groupTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawGroup.isEmpty
+        else { return title.isEmpty ? "Usage" : title }
+        guard !title.isEmpty else { return rawGroup }
+        if title.localizedCaseInsensitiveContains(rawGroup) { return title }
+
+        let short = shortLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !short.isEmpty,
+           short.caseInsensitiveCompare(title) != .orderedSame,
+           short.localizedCaseInsensitiveContains(title) {
+            return short
+        }
+        return "\(rawGroup) \(title)"
+    }
+
     public func displayPercent(_ mode: DisplayMode) -> Double {
         switch mode {
         case .remaining: return remainingPercent

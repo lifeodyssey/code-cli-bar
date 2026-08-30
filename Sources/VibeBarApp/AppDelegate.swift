@@ -4,9 +4,17 @@ import VibeBarCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var environment: AppEnvironment?
-    private var statusItem: StatusItemController?
+    let environment: AppEnvironment
+    private var statusItem: MinimalStatusItemController?
+    private var demoStatusItem: StatusItemController?
     private var demoPresenter: DemoPresenter?
+
+    override init() {
+        self.environment = AppEnvironment(
+            capabilities: DemoMode.isEnabled ? .inheritedDemo : .codeCLIBar
+        )
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if handleRemoteCommandLine() { return }
@@ -24,14 +32,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         installMainMenuIfNeeded()
 
-        let env = AppEnvironment()
-        self.environment = env
+        let env = environment
         if let demo = DemoMode.configuration {
             // A demo launch registers nothing with the system and refreshes
             // nothing; it builds the status item like any launch and then
             // opens the one surface it was asked to show.
             let statusItem = StatusItemController(environment: env)
-            self.statusItem = statusItem
+            self.demoStatusItem = statusItem
             let presenter = DemoPresenter(configuration: demo, environment: env, statusItem: statusItem)
             self.demoPresenter = presenter
             presenter.present()
@@ -39,25 +46,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         do {
-            try LoginItemController.reconcileDesiredState(env.settingsStore.settings.launchAtLogin)
+            try LoginItemController.reconcileDesiredState(
+                env.codeCLISettingsStore.settings.launchAtLogin
+            )
         } catch {
             SafeLog.warn("Reconciling launch at login failed: \(SafeLog.sanitize(error.localizedDescription))")
         }
-        self.statusItem = StatusItemController(environment: env)
+        self.statusItem = MinimalStatusItemController(environment: env)
 
-        CookieRefreshScheduler.shared.start()
-        observeCookieRefreshes(environment: env)
-
-        // Session-index maintenance (excerpt trims, FTS merge, vacuum) runs
-        // off the launch path: the Workbench may never open on a headless
-        // MCP-only day, so launch is the trigger that always exists. The
-        // compactor throttles itself to one completed pass per day.
-        Task.detached(priority: .utility) {
-            try? await Task.sleep(for: .seconds(60))
-            await SessionIndexCompactor.standard.compactIfDue()
-        }
-
-        SafeLog.info("Vibe Bar started")
+        SafeLog.info("Code CLI Bar started")
     }
 
     private func observeCookieRefreshes(environment: AppEnvironment) {
@@ -88,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// means the window is mid-teardown, and resurrecting it would fight the
     /// close the user just asked for.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        environment?.frontWorkbenchIfOpen()
+        environment.frontWorkbenchIfOpen()
         return true
     }
 
@@ -107,7 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func appMenuItem() -> NSMenuItem {
-        let appName = "Vibe Bar"
+        let appName = "Code CLI Bar"
         let menu = NSMenu(title: appName)
         menu.addItem(NSMenuItem(
             title: "About \(appName)",
@@ -180,14 +177,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         statusItem?.applicationWillTerminate()
+        demoStatusItem?.applicationWillTerminate()
         // First: the socket file has to go before anything else tears down, so
         // an agent connecting during shutdown gets a clean "not running"
         // rather than a connection to a half-stopped environment.
-        environment?.mcp?.stop()
-        environment?.settingsStore.flush()
-        environment?.scheduler.stop()
-        environment?.serviceStatus.stop()
-        environment?.remoteProbeService.stop()
+        environment.mcp?.stop()
+        environment.settingsStore.flush()
+        environment.codeCLISettingsStore.flush()
+        environment.scheduler.stop()
+        environment.serviceStatus.stop()
+        environment.remoteProbeService.stop()
         CookieRefreshScheduler.shared.stop()
         return .terminateNow
     }

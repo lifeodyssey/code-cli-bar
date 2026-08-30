@@ -63,10 +63,13 @@ public final class QuotaRefreshScheduler {
             }
     }
 
-    public func start() {
+    public func start(refreshStaleImmediately: Bool = false) {
         scheduleTimer()
         scheduleBoundaryTimer()
         installSystemObservers()
+        if refreshStaleImmediately {
+            _ = triggerRefreshForStaleCacheIfNeeded()
+        }
     }
 
     public func stop() {

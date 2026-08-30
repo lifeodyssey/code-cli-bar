@@ -25,7 +25,7 @@ struct RemoteCostSnapshotBuilder {
     private var weekRequests = 0
     private var monthRequests = 0
     private var totalRequests = 0
-    private var byDay: [Date: (cost: Double, tokens: Int)] = [:]
+    private var byDay: [Date: (cost: Double, tokens: Int, requests: Int)] = [:]
     private var byHour: [Date: (cost: Double, tokens: Int)] = [:]
     private var hourlyDays = Set<Date>()
     private var heatmap = Array(repeating: Array(repeating: 0, count: 24), count: 7)
@@ -92,9 +92,10 @@ struct RemoteCostSnapshotBuilder {
             monthRequests = saturatedAdd(monthRequests, requests)
         }
 
-        var dayValue = byDay[day] ?? (0, 0)
+        var dayValue = byDay[day] ?? (0, 0, 0)
         dayValue.cost += costUSD
         dayValue.tokens = saturatedAdd(dayValue.tokens, tokens)
+        dayValue.requests = saturatedAdd(dayValue.requests, requests)
         byDay[day] = dayValue
 
         let weekday = calendar.component(.weekday, from: date) - 1
@@ -145,7 +146,12 @@ struct RemoteCostSnapshotBuilder {
             last30DaysRequests: monthRequests,
             allTimeRequests: totalRequests,
             dailyHistory: byDay.sorted { $0.key < $1.key }.map {
-                DailyCostPoint(date: $0.key, costUSD: $0.value.cost, totalTokens: $0.value.tokens)
+                DailyCostPoint(
+                    date: $0.key,
+                    costUSD: $0.value.cost,
+                    totalTokens: $0.value.tokens,
+                    requests: $0.value.requests
+                )
             },
             todayHourlyHistory: hourlyPoints(forDayStarting: startOfToday, notAfter: currentHour),
             yesterdayHourlyHistory: hourlyPoints(forDayStarting: startOfYesterday, notAfter: nil),

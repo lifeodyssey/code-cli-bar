@@ -67,7 +67,9 @@ public enum CostUsagePricing {
             return pricing.thresholdTokens == nil
         case .antigravity:
             return dataSet.providers.antigravity.models[normalizeAntigravityModel(model)] != nil
-        case .alibaba, .alibabaTokenPlan, .copilot, .zai, .minimax, .kimi,
+        case .zai, .kimi, .dsh:
+            return CodeCLIUsagePricing.canPrice(tool: tool, model: model)
+        case .alibaba, .alibabaTokenPlan, .copilot, .minimax,
              .cursor, .mimo, .iflytek, .tencentHunyuan, .tencentTokenPlan,
              .volcengine, .volcengineAgentPlan, .baiduQianfan, .openCodeGo,
              .kilo, .kiro, .ollama, .openRouter, .warp:

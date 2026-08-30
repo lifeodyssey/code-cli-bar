@@ -1,7 +1,11 @@
 import Foundation
 
 public enum VibeBarLocalStore {
-    public static let directoryName = ".vibebar"
+    /// Code CLI Bar owns a separate store from the upstream Vibe Bar app.
+    /// Keeping the old directory untouched is important: the optional import
+    /// flow can inspect it later, while uninstalling or resetting this app can
+    /// never damage the user's Vibe Bar state.
+    public static let directoryName = ".code-cli-bar"
 
     public static var baseDirectory: URL {
         baseDirectory(homeDirectory: RealHomeDirectory.path)
@@ -16,6 +20,14 @@ public enum VibeBarLocalStore {
 
     public static var settingsURL: URL {
         baseDirectory.appendingPathComponent("settings.json")
+    }
+
+    /// Product-specific preferences for the compact Code CLI Bar surface.
+    /// The inherited AppSettings file remains available to the quota/cost
+    /// engines, but new UI choices live in this small, independently evolvable
+    /// document.
+    public static var codeCLIBarSettingsURL: URL {
+        baseDirectory.appendingPathComponent("code-cli-bar-settings.json")
     }
 
     // Legacy plaintext cookie paths from short-lived builds. Current code
@@ -67,6 +79,13 @@ public enum VibeBarLocalStore {
 
     public static var costHistoryURL: URL {
         baseDirectory.appendingPathComponent("cost_history.json")
+    }
+
+    /// User-entered subscription payments, credit purchases, and overages.
+    /// This is real cash bookkeeping and must never be mixed with the derived
+    /// API-equivalent cost history.
+    public static var actualCashLedgerURL: URL {
+        baseDirectory.appendingPathComponent("actual_cash.json")
     }
 
     public static var subscriptionHistoryURL: URL {
@@ -253,6 +272,19 @@ public enum VibeBarLocalStore {
             try fm.createDirectory(at: url, withIntermediateDirectories: false)
         }
         try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+    }
+
+    /// SQLite can place the same private rows in its WAL and shared-memory
+    /// sidecars. Protect every file that currently exists, not just the main
+    /// database, so a permissive process umask cannot expose usage history to
+    /// another local account.
+    static func protectSQLiteFiles(at databaseURL: URL) throws {
+        let fm = FileManager.default
+        for suffix in ["", "-wal", "-shm"] {
+            let path = databaseURL.path + suffix
+            guard fm.fileExists(atPath: path) else { continue }
+            try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
+        }
     }
 
     public static func safeFileComponent(_ raw: String) -> String {

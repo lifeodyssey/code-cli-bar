@@ -9,7 +9,7 @@ import Security
 /// lookup per cookie, provider, or account. External items (CLI credentials
 /// and browser Safe Storage keys) are deliberately excluded.
 public enum VibeBarCredentialVault {
-    public static let keychainService = "com.astroqore.VibeBar.credential-vault"
+    public static let keychainService = "com.lifeodyssey.CodeCLIBar.credential-vault"
     public static let keychainAccount = "vault-v1"
 
     public struct Entry: Codable, Sendable, Equatable {

@@ -39,13 +39,39 @@ public struct DailyCostPoint: Sendable, Equatable, Codable, Identifiable {
     public let date: Date
     public let costUSD: Double
     public let totalTokens: Int
+    /// Request coverage for this day. Zero means either no requests or a
+    /// snapshot written before daily request coverage was added.
+    public let requests: Int
+    /// Requests included in `requests` whose model has no verified price.
+    public let unpricedRequests: Int
 
     public var id: Date { date }
 
-    public init(date: Date, costUSD: Double, totalTokens: Int) {
+    public init(
+        date: Date,
+        costUSD: Double,
+        totalTokens: Int,
+        requests: Int = 0,
+        unpricedRequests: Int = 0
+    ) {
         self.date = date
         self.costUSD = costUSD
         self.totalTokens = totalTokens
+        self.requests = requests
+        self.unpricedRequests = unpricedRequests
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case date, costUSD, totalTokens, requests, unpricedRequests
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        date = try container.decode(Date.self, forKey: .date)
+        costUSD = try container.decode(Double.self, forKey: .costUSD)
+        totalTokens = try container.decode(Int.self, forKey: .totalTokens)
+        requests = try container.decodeIfPresent(Int.self, forKey: .requests) ?? 0
+        unpricedRequests = try container.decodeIfPresent(Int.self, forKey: .unpricedRequests) ?? 0
     }
 }
 

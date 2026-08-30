@@ -45,13 +45,23 @@ public enum QuotaFreshnessLabel {
         // signed-out or empty state, which says more than a freshness warning.
         guard lastSuccessAt != nil || lastAttemptAt != nil else { return nil }
 
-        let successAge = lastSuccessAt.map { max(0, now.timeIntervalSince($0)) }
-        let isStale = successAge.map { $0 >= max(0, staleAfter) } ?? true
+        let rawSuccessAge = lastSuccessAt.map { now.timeIntervalSince($0) }
+        let hasInvalidFutureTimestamp = rawSuccessAge.map {
+            $0 < -QuotaFreshnessPolicy.allowedClockSkew
+        } ?? false
+        let successAge = rawSuccessAge.map { max(0, $0) }
+        let isStale = !QuotaFreshnessPolicy.isFresh(
+            timestamp: lastSuccessAt,
+            maxAge: staleAfter,
+            now: now
+        )
         let trimmed = errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines)
         let failure = (trimmed?.isEmpty == false) ? trimmed : nil
         guard isStale || failure != nil else { return nil }
 
-        let dataPhrase = successAge.map { "data \(compactAge($0)) old" } ?? "no cached data"
+        let dataPhrase = hasInvalidFutureTimestamp
+            ? "data timestamp invalid"
+            : successAge.map { "data \(compactAge($0)) old" } ?? "no cached data"
         if let failure {
             let attemptAge = lastAttemptAt.map { max(0, now.timeIntervalSince($0)) }
             // Below the "just now" floor the elapsed time is noise; the data
@@ -66,6 +76,9 @@ public enum QuotaFreshnessLabel {
         }
         guard let successAge else {
             return Description(label: "Stale · never updated", help: defaultHelp)
+        }
+        if hasInvalidFutureTimestamp {
+            return Description(label: "Stale · invalid update time", help: defaultHelp)
         }
         return Description(
             label: "Stale · updated \(compactAge(successAge)) ago",

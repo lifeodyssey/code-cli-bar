@@ -178,4 +178,71 @@ final class CostSnapshotTests: XCTestCase {
         XCTAssertEqual(decoded.recentHourlyHistory, original.recentHourlyHistory)
         XCTAssertEqual(decoded.hourlyCoverageStart, start)
     }
+
+    func testDailyCoverageRebasesRequestAndUnpricedWindows() throws {
+        let calendar = utcCalendar()
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026, month: 8, day: 30, hour: 12
+        )))
+        let today = calendar.startOfDay(for: now)
+        let yesterday = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: today))
+        let snapshot = CostSnapshot(
+            tool: .zai,
+            todayCostUSD: 0,
+            last7DaysCostUSD: 2,
+            last30DaysCostUSD: 2,
+            allTimeCostUSD: 2,
+            todayTokens: 100,
+            last7DaysTokens: 300,
+            last30DaysTokens: 300,
+            allTimeTokens: 300,
+            todayRequests: 99,
+            last7DaysRequests: 99,
+            last30DaysRequests: 99,
+            allTimeRequests: 99,
+            todayUnpricedRequests: 99,
+            last7DaysUnpricedRequests: 99,
+            last30DaysUnpricedRequests: 99,
+            allTimeUnpricedRequests: 99,
+            dailyHistory: [
+                DailyCostPoint(
+                    date: yesterday,
+                    costUSD: 2,
+                    totalTokens: 200,
+                    requests: 2,
+                    unpricedRequests: 0
+                ),
+                DailyCostPoint(
+                    date: today,
+                    costUSD: 0,
+                    totalTokens: 100,
+                    requests: 1,
+                    unpricedRequests: 1
+                )
+            ],
+            heatmap: .empty(tool: .zai),
+            modelBreakdowns: [],
+            jsonlFilesFound: 1,
+            updatedAt: now
+        )
+
+        let rebased = snapshot.rebasedForCurrentDay(now: now, calendar: calendar)
+
+        XCTAssertEqual(rebased.todayRequests, 1)
+        XCTAssertEqual(rebased.todayUnpricedRequests, 1)
+        XCTAssertEqual(rebased.last7DaysRequests, 3)
+        XCTAssertEqual(rebased.last7DaysUnpricedRequests, 1)
+        XCTAssertEqual(rebased.allTimeRequests, 3)
+    }
+
+    func testLegacyDailyCostPointDecodesWithoutCoverageFields() throws {
+        let data = Data(#"{"date":0,"costUSD":1.25,"totalTokens":42}"#.utf8)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+
+        let point = try decoder.decode(DailyCostPoint.self, from: data)
+
+        XCTAssertEqual(point.requests, 0)
+        XCTAssertEqual(point.unpricedRequests, 0)
+    }
 }

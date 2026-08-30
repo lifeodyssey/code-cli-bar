@@ -64,6 +64,53 @@ final class ZaiParserTests: XCTestCase {
         XCTAssertEqual(snap.buckets[1].title, "5 Hours")
     }
 
+    func testCurrentZCodeCreditLimitsProduceWeeklyAndFiveHourBuckets() throws {
+        let json = """
+        {
+          "code": 200,
+          "msg": "OK",
+          "success": true,
+          "data": {
+            "level": "lite",
+            "limits": [
+              {
+                "type": "CREDIT_LIMIT",
+                "unit": 3,
+                "number": 5,
+                "usage": 2000,
+                "remaining": 1586,
+                "currentValue": 413,
+                "percentage": 20,
+                "nextResetTime": 1900000000000
+              },
+              {
+                "type": "CREDIT_LIMIT",
+                "unit": 6,
+                "number": 1,
+                "usage": 10000,
+                "remaining": 9586,
+                "currentValue": 413,
+                "percentage": 4,
+                "nextResetTime": 1900600000000
+              }
+            ]
+          }
+        }
+        """
+
+        let snap = try ZaiResponseParser.parse(data: Data(json.utf8), now: now)
+
+        XCTAssertEqual(snap.planName, "GLM Coding Lite")
+        XCTAssertEqual(snap.buckets.map(\.title), ["Weekly", "5 Hours"])
+        guard snap.buckets.count == 2 else { return }
+        XCTAssertEqual(snap.buckets[0].usedPercent, 4.14, accuracy: 0.001)
+        XCTAssertEqual(snap.buckets[1].usedPercent, 20.7, accuracy: 0.001)
+        XCTAssertEqual(
+            snap.buckets[0].resetAt,
+            Date(timeIntervalSince1970: 1_900_600_000)
+        )
+    }
+
     func testTimeLimitAppendsAfterTokenLimits() throws {
         let json = """
         {

@@ -17,7 +17,8 @@ final class MiscCookieSpecCatalogTests: XCTestCase {
         .kiro,               // local `kiro-cli` probe
         .openRouter,         // API key
         .warp,               // API key
-        .antigravity         // local language-server probe
+        .antigravity,        // local language-server probe
+        .dsh                 // local session files; quota is shared with OpenCode Go
     ]
 
     func testEveryMiscPageProviderIsClassified() {

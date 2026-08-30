@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Build Vibe Bar executable, wrap it into a proper .app bundle, and sign it.
+# Build Code CLI Bar, wrap it into a proper .app bundle, and sign it.
 # Usage: ./Scripts/build_app.sh [debug|release]
-# Output: .build/Vibe Bar.app
+# Output: .build/Code CLI Bar.app
 #
 # Signing defaults to ad-hoc for local builds. Public release automation can
 # set VIBEBAR_CODESIGN_IDENTITY to a Developer ID Application identity; the
@@ -35,12 +35,16 @@ if [[ ! -f "$CORE_RESOURCE_BUNDLE/pricing.json" ]]; then
     echo "Core resource bundle not found at $CORE_RESOURCE_BUNDLE" >&2
     exit 1
 fi
+if [[ ! -f "$CORE_RESOURCE_BUNDLE/dsh-zstd-decode.mjs" ]]; then
+    echo "dsh decoder resource not found at $CORE_RESOURCE_BUNDLE" >&2
+    exit 1
+fi
 if [[ -z "$SPARKLE_FRAMEWORK_SOURCE" || ! -x "$SPARKLE_FRAMEWORK_SOURCE/Versions/B/Sparkle" ]]; then
     echo "Sparkle framework artifact not found after SwiftPM build." >&2
     exit 1
 fi
 
-APP_DIR="$ROOT/.build/Vibe Bar.app"
+APP_DIR="$ROOT/.build/Code CLI Bar.app"
 ENTITLEMENTS="$ROOT/Resources/VibeBar.entitlements"
 SPARKLE_FRAMEWORK="$APP_DIR/Contents/Frameworks/Sparkle.framework"
 echo "==> packaging $APP_DIR"
@@ -79,7 +83,11 @@ if [[ ! -f "$APP_DIR/Contents/Resources/VibeBar_VibeBarCore.bundle/pricing.json"
     echo "Packaged core resource bundle is incomplete." >&2
     exit 1
 fi
-for license_name in CodexBar SweetCookieKit Sparkle; do
+if [[ ! -f "$APP_DIR/Contents/Resources/VibeBar_VibeBarCore.bundle/dsh-zstd-decode.mjs" ]]; then
+    echo "Packaged dsh decoder resource is missing." >&2
+    exit 1
+fi
+for license_name in CodexBar DeepSeekDSH SweetCookieKit Sparkle; do
     if [[ ! -f "$APP_DIR/Contents/Resources/ThirdPartyLicenses/$license_name.txt" ]]; then
         echo "Packaged third-party license resources are incomplete." >&2
         exit 1

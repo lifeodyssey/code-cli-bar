@@ -161,6 +161,67 @@ final class CostHistoryStoreTests: XCTestCase {
         XCTAssertEqual(merged.topModels(forHour: yesterdayHour, limit: .max), yesterdayModels)
     }
 
+    func testMergeAndAugmentPersistsUnpricedCoverage() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CodeCLIBarCostCoverage-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let now = Date()
+        let today = Calendar.current.startOfDay(for: now)
+        let snapshot = CostSnapshot(
+            tool: .zai,
+            todayCostUSD: 0,
+            last7DaysCostUSD: 0,
+            last30DaysCostUSD: 0,
+            allTimeCostUSD: 0,
+            todayTokens: 123,
+            last7DaysTokens: 123,
+            last30DaysTokens: 123,
+            allTimeTokens: 123,
+            todayRequests: 1,
+            last7DaysRequests: 1,
+            last30DaysRequests: 1,
+            allTimeRequests: 1,
+            todayUnpricedRequests: 1,
+            last7DaysUnpricedRequests: 1,
+            last30DaysUnpricedRequests: 1,
+            allTimeUnpricedRequests: 1,
+            dailyHistory: [
+                DailyCostPoint(
+                    date: today,
+                    costUSD: 0,
+                    totalTokens: 123,
+                    requests: 1,
+                    unpricedRequests: 1
+                )
+            ],
+            heatmap: .empty(tool: .zai),
+            modelBreakdowns: [],
+            jsonlFilesFound: 1,
+            updatedAt: now
+        )
+        let store = CostHistoryStore(fileURL: directory.appendingPathComponent("cost_history.json"))
+
+        let merged = await store.mergeAndAugment(
+            snapshot,
+            retentionDays: CostDataSettings.unlimitedRetentionDays
+        )
+        await store.flushPendingWrites()
+        let reloaded = CostHistoryStore(fileURL: directory.appendingPathComponent("cost_history.json"))
+        let history = await reloaded.history(
+            for: .zai,
+            days: nil,
+            now: now,
+            retentionDays: CostDataSettings.unlimitedRetentionDays
+        )
+
+        XCTAssertEqual(merged.todayUnpricedRequests, 1)
+        XCTAssertEqual(merged.todayRequests, 1)
+        XCTAssertEqual(history.days.first?.unpricedRequests, 1)
+        XCTAssertEqual(history.days.first?.requests, 1)
+    }
+
     func testMergeAndAugmentKeepsLocalTodayWhenTimeZoneIsAheadOfUTC() async throws {
         let shanghai = TimeZone(secondsFromGMT: 8 * 3600)!
 

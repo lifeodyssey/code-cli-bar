@@ -25,6 +25,10 @@ public actor CostHistoryStore {
         let date: String      // YYYY-MM-DD
         var costUSD: Double
         var totalTokens: Int
+        /// Optional for backward compatibility with history written before
+        /// daily pricing coverage was persisted.
+        var requests: Int?
+        var unpricedRequests: Int?
         /// Top models for the day, by cost. Optional so pre-v3 files decode;
         /// nil on days recorded before the field existed. Persisted so the
         /// chart's day inspector keeps its model mix after the source logs
@@ -176,6 +180,10 @@ public actor CostHistoryStore {
                 let freshWins = point.totalTokens >= storage.entries[idx].totalTokens
                 storage.entries[idx].costUSD = max(storage.entries[idx].costUSD, point.costUSD)
                 storage.entries[idx].totalTokens = max(storage.entries[idx].totalTokens, point.totalTokens)
+                if freshWins, point.requests > 0 {
+                    storage.entries[idx].requests = point.requests
+                    storage.entries[idx].unpricedRequests = point.unpricedRequests
+                }
                 if freshWins, let fresh = Self.persistedModels(from: modelsByKey[key]) {
                     storage.entries[idx].models = fresh
                 }
@@ -185,6 +193,8 @@ public actor CostHistoryStore {
                     date: key,
                     costUSD: point.costUSD,
                     totalTokens: point.totalTokens,
+                    requests: point.requests,
+                    unpricedRequests: point.unpricedRequests,
                     models: Self.persistedModels(from: modelsByKey[key])
                 ))
             }
@@ -250,6 +260,8 @@ public actor CostHistoryStore {
                 date: key,
                 costUSD: point.costUSD,
                 totalTokens: point.totalTokens,
+                requests: point.requests,
+                unpricedRequests: point.unpricedRequests,
                 models: Self.persistedModels(from: modelsByKey[key])
             )
         }
@@ -273,6 +285,10 @@ public actor CostHistoryStore {
         var weekCost = 0.0, weekTokens = 0
         var monthCost = 0.0, monthTokens = 0
         var allCost = 0.0, allTokens = 0
+        var todayRequests = 0, todayUnpriced = 0
+        var weekRequests = 0, weekUnpriced = 0
+        var monthRequests = 0, monthUnpriced = 0
+        var allRequests = 0, allUnpriced = 0
         var dailyPoints: [DailyCostPoint] = []
         var persistedDayModels: [Date: [CostSnapshot.ModelBreakdown]] = [:]
         let cutoffKey = retentionCutoffKey(now: snapshot.updatedAt, retentionDays: retentionDays)
@@ -281,7 +297,15 @@ public actor CostHistoryStore {
             guard let day = dateFormatter.date(from: entry.date) else { continue }
             let normalizedDay = calendar.startOfDay(for: day)
             guard normalizedDay <= today else { continue }
-            dailyPoints.append(DailyCostPoint(date: normalizedDay, costUSD: entry.costUSD, totalTokens: entry.totalTokens))
+            let requests = entry.requests ?? 0
+            let unpriced = entry.unpricedRequests ?? 0
+            dailyPoints.append(DailyCostPoint(
+                date: normalizedDay,
+                costUSD: entry.costUSD,
+                totalTokens: entry.totalTokens,
+                requests: requests,
+                unpricedRequests: unpriced
+            ))
             if let models = entry.models, !models.isEmpty {
                 persistedDayModels[normalizedDay] = models.map {
                     CostSnapshot.ModelBreakdown(modelName: $0.name, costUSD: $0.costUSD, totalTokens: $0.totalTokens)
@@ -289,20 +313,29 @@ public actor CostHistoryStore {
             }
             allCost += entry.costUSD
             allTokens += entry.totalTokens
+            allRequests += requests
+            allUnpriced += unpriced
             if calendar.isDate(normalizedDay, inSameDayAs: snapshot.updatedAt) {
                 todayCost += entry.costUSD
                 todayTokens += entry.totalTokens
+                todayRequests += requests
+                todayUnpriced += unpriced
             }
             if normalizedDay >= weekCutoff {
                 weekCost += entry.costUSD
                 weekTokens += entry.totalTokens
+                weekRequests += requests
+                weekUnpriced += unpriced
             }
             if normalizedDay >= monthCutoff {
                 monthCost += entry.costUSD
                 monthTokens += entry.totalTokens
+                monthRequests += requests
+                monthUnpriced += unpriced
             }
         }
         dailyPoints.sort { $0.date < $1.date }
+        let hasDailyRequestCoverage = dailyPoints.contains { $0.requests > 0 }
 
         return CostSnapshot(
             tool: snapshot.tool,
@@ -314,6 +347,14 @@ public actor CostHistoryStore {
             last7DaysTokens: weekTokens,
             last30DaysTokens: monthTokens,
             allTimeTokens: allTokens,
+            todayRequests: hasDailyRequestCoverage ? todayRequests : snapshot.todayRequests,
+            last7DaysRequests: hasDailyRequestCoverage ? weekRequests : snapshot.last7DaysRequests,
+            last30DaysRequests: hasDailyRequestCoverage ? monthRequests : snapshot.last30DaysRequests,
+            allTimeRequests: hasDailyRequestCoverage ? allRequests : snapshot.allTimeRequests,
+            todayUnpricedRequests: hasDailyRequestCoverage ? todayUnpriced : snapshot.todayUnpricedRequests,
+            last7DaysUnpricedRequests: hasDailyRequestCoverage ? weekUnpriced : snapshot.last7DaysUnpricedRequests,
+            last30DaysUnpricedRequests: hasDailyRequestCoverage ? monthUnpriced : snapshot.last30DaysUnpricedRequests,
+            allTimeUnpricedRequests: hasDailyRequestCoverage ? allUnpriced : snapshot.allTimeUnpricedRequests,
             dailyHistory: dailyPoints,
             todayHourlyHistory: snapshot.todayHourlyHistory,
             yesterdayHourlyHistory: snapshot.yesterdayHourlyHistory,
@@ -357,7 +398,9 @@ public actor CostHistoryStore {
                     return DailyCostPoint(
                         date: calendar.startOfDay(for: day),
                         costUSD: entry.costUSD,
-                        totalTokens: entry.totalTokens
+                        totalTokens: entry.totalTokens,
+                        requests: entry.requests ?? 0,
+                        unpricedRequests: entry.unpricedRequests ?? 0
                     )
                 }
                 .sorted { $0.date < $1.date }
@@ -370,7 +413,13 @@ public actor CostHistoryStore {
             guard let day = calendar.date(byAdding: .day, value: -offset, to: today) else { continue }
             let key = dateFormatter.string(from: day)
             if let entry = byDate[key] {
-                points.append(DailyCostPoint(date: day, costUSD: entry.costUSD, totalTokens: entry.totalTokens))
+                points.append(DailyCostPoint(
+                    date: day,
+                    costUSD: entry.costUSD,
+                    totalTokens: entry.totalTokens,
+                    requests: entry.requests ?? 0,
+                    unpricedRequests: entry.unpricedRequests ?? 0
+                ))
             } else if dayCount != nil {
                 points.append(DailyCostPoint(date: day, costUSD: 0, totalTokens: 0))
             }
@@ -577,13 +626,20 @@ public actor CostHistoryStore {
             if var existing = byKey[compoundKey] {
                 existing.costUSD = max(existing.costUSD, entry.costUSD)
                 existing.totalTokens = max(existing.totalTokens, entry.totalTokens)
+                existing.requests = max(existing.requests ?? 0, entry.requests ?? 0)
+                existing.unpricedRequests = max(
+                    existing.unpricedRequests ?? 0,
+                    entry.unpricedRequests ?? 0
+                )
                 byKey[compoundKey] = existing
             } else {
                 byKey[compoundKey] = Entry(
                     tool: entry.tool,
                     date: migratedKey,
                     costUSD: entry.costUSD,
-                    totalTokens: entry.totalTokens
+                    totalTokens: entry.totalTokens,
+                    requests: entry.requests,
+                    unpricedRequests: entry.unpricedRequests
                 )
             }
         }

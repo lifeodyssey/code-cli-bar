@@ -10,15 +10,23 @@ public struct ClaudeQuotaAdapter: QuotaAdapter {
     /// browser, used to self-heal an expired sessionKey on the web path.
     /// Returns true when a fresh cookie was imported. Injectable for tests.
     private let reimportWebCookieOnStale: @Sendable () async -> Bool
+    /// Provider-authored quota snapshot written by Claude Code. This is the
+    /// last-resort path when neither CLI OAuth material nor a web session can
+    /// authenticate a live request.
+    private let localUsageCacheResolver: @Sendable (AccountIdentity) throws -> AccountQuota
 
     public init(
         session: URLSession = .shared,
         credentialResolver: (@Sendable (CredentialSource, AccountIdentity) throws -> ClaudeCredential)? = nil,
-        reimportWebCookieOnStale: (@Sendable () async -> Bool)? = nil
+        reimportWebCookieOnStale: (@Sendable () async -> Bool)? = nil,
+        localUsageCacheResolver: (@Sendable (AccountIdentity) throws -> AccountQuota)? = nil
     ) {
         self.session = session
         self.credentialResolver = credentialResolver ?? Self.defaultResolver
         self.reimportWebCookieOnStale = reimportWebCookieOnStale ?? Self.defaultWebCookieReimporter
+        self.localUsageCacheResolver = localUsageCacheResolver ?? { account in
+            try ClaudeLocalUsageCacheReader.load(for: account)
+        }
     }
 
     /// Default cookie re-import: pull a fresh claude.ai sessionKey from the
@@ -39,19 +47,85 @@ public struct ClaudeQuotaAdapter: QuotaAdapter {
         var firstError: Error?
         for source in sourceOrder(for: account) {
             do {
+                let liveQuota: AccountQuota
                 switch source {
                 case .webCookie:
-                    return try await fetchWithWebCookies(for: account)
+                    liveQuota = try await fetchWithWebCookies(for: account)
                 case .oauthCLI, .cliDetected:
-                    return try await fetchWithOAuthCredential(for: account, source: source)
+                    liveQuota = try await fetchWithOAuthCredential(for: account, source: source)
                 case .apiToken, .browserCookie, .manualCookie, .localProbe, .notConfigured:
                     continue
                 }
+                return supplementPartialLiveQuota(liveQuota, for: account)
             } catch {
                 if firstError == nil { firstError = error }
             }
         }
+        do {
+            let local = try localUsageCacheResolver(account)
+            guard ClaudeLocalUsageCacheReader.isFreshForLiveFallback(local) else {
+                throw QuotaError.noCredential
+            }
+            return local
+        } catch {
+            if firstError == nil { firstError = error }
+        }
         throw firstError ?? QuotaError.noCredential
+    }
+
+    /// Claude's live usage endpoint occasionally returns only the session
+    /// window even while Claude Code's provider-authored local cache still has
+    /// the active aggregate weekly window. A successful but partial response
+    /// must not suppress that valid weekly observation.
+    private func supplementPartialLiveQuota(
+        _ live: AccountQuota,
+        for account: AccountIdentity,
+        now: Date = Date()
+    ) -> AccountQuota {
+        let hasCurrentAggregateWeekly = live.buckets.contains { bucket in
+            bucket.id.caseInsensitiveCompare("weekly") == .orderedSame
+                && bucket.groupTitle == nil
+                && bucket.resetAt.map { $0 > now } == true
+        }
+        guard !hasCurrentAggregateWeekly,
+              let local = try? localUsageCacheResolver(account)
+        else { return live }
+
+        var merged = live
+        var appendedObservation = false
+        let canUseLocalUtilization = ClaudeLocalUsageCacheReader.isFreshForLiveFallback(
+            local,
+            now: now
+        )
+        let localByID = Dictionary(
+            local.buckets.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        for index in merged.buckets.indices {
+            guard merged.buckets[index].resetAt == nil,
+                  let fallback = localByID[merged.buckets[index].id],
+                  ClaudeLocalUsageCacheReader.isCurrent(fallback, in: local, now: now)
+            else { continue }
+            merged.buckets[index].resetAt = fallback.resetAt
+            if merged.buckets[index].rawWindowSeconds == nil {
+                merged.buckets[index].rawWindowSeconds = fallback.rawWindowSeconds
+            }
+        }
+
+        var liveIDs = Set(merged.buckets.map(\.id))
+        for bucket in local.buckets where !liveIDs.contains(bucket.id) {
+            guard canUseLocalUtilization,
+                  ClaudeLocalUsageCacheReader.isCurrent(bucket, in: local, now: now)
+            else { continue }
+            merged.buckets.append(bucket)
+            liveIDs.insert(bucket.id)
+            appendedObservation = true
+        }
+        if appendedObservation {
+            merged.queriedAt = min(live.queriedAt, local.queriedAt)
+        }
+        return merged
     }
 
     private func fetchWithOAuthCredential(for account: AccountIdentity, source: CredentialSource) async throws -> AccountQuota {

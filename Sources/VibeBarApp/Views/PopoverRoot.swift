@@ -1538,6 +1538,7 @@ private struct OverviewCostCard: View {
         case .gemini: return "No Gemini CLI or chat-history usage found yet."
         case .antigravity: return "No Antigravity conversation token metadata found yet."
         case .grok: return "No Grok session usage found yet."
+        case .dsh: return "No dsh session usage found yet."
         case .alibaba, .alibabaTokenPlan, .copilot, .zai, .minimax, .kimi, .cursor, .mimo, .iflytek, .tencentHunyuan, .tencentTokenPlan, .volcengine, .volcengineAgentPlan, .baiduQianfan, .openCodeGo, .kilo, .kiro, .ollama, .openRouter, .warp:
             // Misc providers' empty cost-history view shouldn't be
             // reachable (cost cards are gated on
@@ -2150,7 +2151,7 @@ struct ProviderQuotaCard: View {
         case .claude: return "Run claude login, then refresh."
         case .grok: return "Run grok login or import grok.com cookies, then refresh."
         case .cursor: return "Sign in to Cursor.app or import cursor.com cookies, then refresh."
-        case .alibaba, .alibabaTokenPlan, .gemini, .antigravity, .copilot, .zai, .minimax, .kimi, .mimo, .iflytek, .tencentHunyuan, .tencentTokenPlan, .volcengine, .volcengineAgentPlan, .baiduQianfan, .openCodeGo, .kilo, .kiro, .ollama, .openRouter, .warp:
+        case .alibaba, .alibabaTokenPlan, .gemini, .antigravity, .copilot, .zai, .minimax, .kimi, .mimo, .iflytek, .tencentHunyuan, .tencentTokenPlan, .volcengine, .volcengineAgentPlan, .baiduQianfan, .openCodeGo, .dsh, .kilo, .kiro, .ollama, .openRouter, .warp:
             // Misc providers route through the Misc page's per-card
             // setup CTA. This empty-message path is only reachable from
             // a primary-provider detail view, but cover misc cases

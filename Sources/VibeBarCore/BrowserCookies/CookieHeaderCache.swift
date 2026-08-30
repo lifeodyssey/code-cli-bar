@@ -36,7 +36,7 @@ public enum CookieHeaderCache {
     }
 
     public static let keychainService = SecureCookieHeaderStore.keychainService
-    private static let legacyKeychainService = "com.astroqore.VibeBar.misc"
+    private static let legacyKeychainService = "com.lifeodyssey.CodeCLIBar.misc"
 
     public static func keychainAccount(for tool: ToolType) -> String {
         precondition(tool.isMisc, "CookieHeaderCache requested for primary tool: \(tool)")

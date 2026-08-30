@@ -188,7 +188,9 @@ public final class AccountStore: ObservableObject {
             }
             if selected != nil { break }
         }
-        guard let selected else { return nil }
+        guard let selected else {
+            return ClaudeLocalUsageCacheReader.detectedAccount()
+        }
         let credential = selected.credential
         let id: String
         let alias: String

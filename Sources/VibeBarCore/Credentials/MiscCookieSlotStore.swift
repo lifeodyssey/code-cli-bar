@@ -290,7 +290,7 @@ public enum MiscCookieSlotStore {
     /// Settings UI subscribes to this so the slot list redraws when
     /// `HiddenCookieRefresher` updates a slot in the background.
     public static let didChangeNotification = Notification.Name(
-        "com.astroqore.VibeBar.miscCookieSlotsChanged"
+        "com.lifeodyssey.CodeCLIBar.miscCookieSlotsChanged"
     )
 
     private static func postChangeNotification(for tool: ToolType, instanceID: String) {

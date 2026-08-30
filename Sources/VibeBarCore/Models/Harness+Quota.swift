@@ -52,6 +52,12 @@ extension Harness {
     /// — CLI, exec, the VS Code extension and the desktop app's Codex tab — is
     /// the overwhelming majority; a ChatGPT Work rollout is recognised from its
     /// `originator` at scan time and overrides this.
+    ///
+    /// The compact fork also scans ZCode, Kimi Code, OpenCode Go, and dsh.
+    /// Those sources use `CodeCLIProvider` as their product identity and do
+    /// not invent a semantically wrong case in AgentSessionKit's inherited
+    /// `Harness` enum; their ledger rows intentionally keep this dimension
+    /// empty until that upstream vocabulary gains matching cases.
     public static func defaultHarness(for tool: ToolType) -> Harness? {
         switch tool {
         case .codex:       .codex
@@ -62,7 +68,7 @@ extension Harness {
         case .cursor:      .cursor
         case .alibaba, .alibabaTokenPlan, .copilot, .zai, .minimax, .kimi,
              .mimo, .iflytek, .tencentHunyuan, .tencentTokenPlan, .volcengine,
-             .volcengineAgentPlan, .baiduQianfan, .openCodeGo, .kilo, .kiro,
+             .volcengineAgentPlan, .baiduQianfan, .openCodeGo, .dsh, .kilo, .kiro,
              .ollama, .openRouter, .warp:
             nil
         }

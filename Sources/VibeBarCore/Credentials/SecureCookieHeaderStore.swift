@@ -39,7 +39,7 @@ public enum SecureCookieHeaderStore {
         case invalid
     }
 
-    public static let keychainService = "com.astroqore.VibeBar.web-cookies"
+    public static let keychainService = "com.lifeodyssey.CodeCLIBar.web-cookies"
 
     private static let cacheLock = NSLock()
     private nonisolated(unsafe) static var cache: [String: Entry?] = [:]

@@ -25,6 +25,8 @@ public struct KimiQuotaAdapter: QuotaAdapter {
 
     private let session: URLSession
     private let now: @Sendable () -> Date
+    private let nativeCredentialResolver: @Sendable () throws -> KimiCodeCredential
+    private let nativeCredentialCache: KimiCodeRuntimeCredentialCache
 
     fileprivate static let accessTokenCredential = ChromiumLocalStorageCredential(
         origin: "https://www.kimi.com",
@@ -59,21 +61,50 @@ public struct KimiQuotaAdapter: QuotaAdapter {
     private static let refreshEndpoint = URL(string:
         "https://auth.kimi.com/api/account.gateway.v1.AuthService/RefreshToken"
     )!
+    private static let codingPlanEndpoint = URL(string:
+        "https://api.kimi.com/coding/v1/usages"
+    )!
+    private static let codingOAuthRefreshEndpoint = URL(string:
+        "https://auth.kimi.com/api/oauth/token"
+    )!
+    private static let codingOAuthClientID = "17e5f671-d194-4dfb-9706-5516cb48c098"
     private static let membershipStatsWallTimeSeconds: Double = 10
 
     public init(
         session: URLSession = .shared,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        nativeCredentialResolver: (@Sendable () throws -> KimiCodeCredential)? = nil
     ) {
         self.session = session
         self.now = now
+        self.nativeCredentialCache = KimiCodeRuntimeCredentialCache()
+        self.nativeCredentialResolver = nativeCredentialResolver ?? {
+            try KimiCodeCredentialReader.load()
+        }
     }
 
     public func fetch(for account: AccountIdentity) async throws -> AccountQuota {
-        let resolutions = MiscCookieResolver.resolveAll(for: KimiQuotaAdapter.cookieSpec, account: account)
-        guard !resolutions.isEmpty else { throw QuotaError.noCredential }
-
         let queriedAt = now()
+        var nativeError: QuotaError?
+        do {
+            let credential = nativeCredentialCache.preferred(
+                over: try nativeCredentialResolver(),
+                at: queriedAt
+            )
+            return try await fetchWithRefreshingNativeCredential(
+                credential,
+                account: account,
+                queriedAt: queriedAt
+            )
+        } catch let error as QuotaError {
+            nativeError = error
+        } catch {
+            nativeError = .noCredential
+        }
+
+        let resolutions = MiscCookieResolver.resolveAll(for: KimiQuotaAdapter.cookieSpec, account: account)
+        guard !resolutions.isEmpty else { throw nativeError ?? QuotaError.noCredential }
+
         let results = await MiscCookieAutoImporter.shared.gatherSlotResults(
             spec: KimiQuotaAdapter.cookieSpec,
             account: account,
@@ -89,6 +120,144 @@ public struct KimiQuotaAdapter: QuotaAdapter {
         )
         aggregated.buckets = KimiResponseParser.canonicalBucketOrder(aggregated.buckets)
         return aggregated
+    }
+
+    private func fetchWithRefreshingNativeCredential(
+        _ credential: KimiCodeCredential,
+        account: AccountIdentity,
+        queriedAt: Date
+    ) async throws -> AccountQuota {
+        var activeCredential = credential
+        var didRefresh = false
+
+        if activeCredential.isExpired(at: queriedAt) {
+            activeCredential = try await refreshNativeCredential(
+                activeCredential,
+                queriedAt: queriedAt
+            )
+            didRefresh = true
+        }
+
+        do {
+            return try await fetchWithNativeCredential(
+                activeCredential,
+                account: account,
+                queriedAt: queriedAt
+            )
+        } catch let error as QuotaError where error.isCredentialState && !didRefresh {
+            activeCredential = try await refreshNativeCredential(
+                activeCredential,
+                queriedAt: queriedAt
+            )
+            return try await fetchWithNativeCredential(
+                activeCredential,
+                account: account,
+                queriedAt: queriedAt
+            )
+        }
+    }
+
+    /// Uses Kimi Code's own OAuth refresh contract, but intentionally keeps the
+    /// rotated token in memory. The CLI remains the sole owner of its credential
+    /// file, so this adapter never rewrites ~/.kimi-code/credentials.
+    private func refreshNativeCredential(
+        _ credential: KimiCodeCredential,
+        queriedAt: Date
+    ) async throws -> KimiCodeCredential {
+        guard let refreshToken = credential.refreshToken else {
+            throw QuotaError.needsLogin
+        }
+
+        let request = Self.nativeRefreshRequest(refreshToken: refreshToken)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
+            throw error
+        } catch {
+            throw QuotaError.network("Kimi OAuth refresh failed: \(error.localizedDescription)")
+        }
+
+        guard let http = response as? HTTPURLResponse else {
+            throw QuotaError.network("Kimi OAuth refresh returned an invalid response")
+        }
+        guard http.statusCode == 200 else {
+            if http.statusCode == 401 || http.statusCode == 403 || Self.oauthErrorCode(data) == "invalid_grant" {
+                throw QuotaError.needsLogin
+            }
+            if http.statusCode == 429 { throw QuotaError.rateLimited }
+            throw QuotaError.network("Kimi OAuth refresh returned HTTP \(http.statusCode)")
+        }
+
+        let refreshed: KimiCodeOAuthRefreshResponse
+        do {
+            refreshed = try JSONDecoder().decode(KimiCodeOAuthRefreshResponse.self, from: data)
+        } catch {
+            throw QuotaError.parseFailure("Kimi OAuth refresh response is invalid")
+        }
+        let accessToken = refreshed.accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rotatedRefreshToken = refreshed.refreshToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !accessToken.isEmpty, !rotatedRefreshToken.isEmpty, refreshed.expiresIn > 0 else {
+            throw QuotaError.parseFailure("Kimi OAuth refresh response is incomplete")
+        }
+        let credential = KimiCodeCredential(
+            accessToken: accessToken,
+            refreshToken: rotatedRefreshToken,
+            expiresAt: queriedAt.addingTimeInterval(refreshed.expiresIn)
+        )
+        nativeCredentialCache.store(credential)
+        return credential
+    }
+
+    private static func nativeRefreshRequest(refreshToken: String) -> URLRequest {
+        var components = URLComponents()
+        components.queryItems = [
+            URLQueryItem(name: "client_id", value: codingOAuthClientID),
+            URLQueryItem(name: "grant_type", value: "refresh_token"),
+            URLQueryItem(name: "refresh_token", value: refreshToken)
+        ]
+
+        var request = URLRequest(url: codingOAuthRefreshEndpoint)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 15
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
+        return request
+    }
+
+    private static func oauthErrorCode(_ data: Data) -> String? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return root["error"] as? String
+    }
+
+    private func fetchWithNativeCredential(
+        _ credential: KimiCodeCredential,
+        account: AccountIdentity,
+        queriedAt: Date
+    ) async throws -> AccountQuota {
+        var request = URLRequest(url: Self.codingPlanEndpoint)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 15
+        request.setValue("Bearer \(credential.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let (data, _) = try await self.data(for: request)
+        let snapshot = try KimiResponseParser.parseCodingPlan(data: data)
+        return AccountQuota(
+            accountId: account.id,
+            tool: .kimi,
+            buckets: KimiResponseParser.canonicalBucketOrder(snapshot.buckets),
+            plan: account.plan,
+            email: account.email,
+            queriedAt: queriedAt,
+            error: nil
+        )
     }
 
     private func fetchOneSlot(
@@ -498,6 +667,54 @@ private struct KimiRefreshTokenResponse: Decodable {
     let refreshToken: String
 }
 
+private struct KimiCodeOAuthRefreshResponse: Decodable {
+    let accessToken: String
+    let refreshToken: String
+    let expiresIn: TimeInterval
+
+    private enum CodingKeys: String, CodingKey {
+        case accessToken = "access_token"
+        case refreshToken = "refresh_token"
+        case expiresIn = "expires_in"
+    }
+}
+
+/// Holds a rotated Kimi Code OAuth pair for this adapter's process lifetime.
+/// Kimi Code owns the on-disk credential, so the monitor never persists this
+/// value or writes back into the CLI's store.
+private final class KimiCodeRuntimeCredentialCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var credential: KimiCodeCredential?
+
+    func preferred(over external: KimiCodeCredential, at date: Date) -> KimiCodeCredential {
+        lock.withLock {
+            guard let cached = credential else {
+                credential = external
+                return external
+            }
+            if !cached.isExpired(at: date) { return cached }
+            if !external.isExpired(at: date) {
+                credential = external
+                return external
+            }
+
+            // Both are expired. Keep the one issued later so the next refresh
+            // uses the most recently rotated refresh token.
+            if let externalExpiry = external.expiresAt,
+               let cachedExpiry = cached.expiresAt,
+               externalExpiry > cachedExpiry {
+                credential = external
+                return external
+            }
+            return cached
+        }
+    }
+
+    func store(_ credential: KimiCodeCredential) {
+        lock.withLock { self.credential = credential }
+    }
+}
+
 // MARK: - JWT session info
 
 struct KimiSessionInfo {
@@ -571,6 +788,51 @@ enum KimiResponseParser {
             throw QuotaError.parseFailure("Kimi response had no usable usage windows.")
         }
         return Snapshot(buckets: buckets)
+    }
+
+    /// Parse the standalone Kimi Code plan endpoint used by the CLI OAuth
+    /// credential. Its shape differs from the kimi.com Membership APIs:
+    /// `usage` is the weekly pool and `limits[].detail` is the five-hour pool.
+    static func parseCodingPlan(data: Data) throws -> Snapshot {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw QuotaError.parseFailure("Kimi Code usage response is invalid")
+        }
+
+        var buckets: [QuotaBucket] = []
+        if let usage = root["usage"] as? [String: Any],
+           let weekly = codingPlanBucket(
+               id: "kimi.weekly",
+               title: "Weekly",
+               shortLabel: "Wk",
+               detail: usage,
+               windowSeconds: 7 * 86_400
+           ) {
+            buckets.append(weekly)
+        }
+
+        if let limits = root["limits"] as? [Any] {
+            for raw in limits {
+                guard let item = raw as? [String: Any],
+                      let detail = item["detail"] as? [String: Any]
+                else { continue }
+                let window = item["window"] as? [String: Any]
+                let seconds = codingPlanWindowSeconds(window) ?? 5 * 3_600
+                guard let rate = codingPlanBucket(
+                    id: "kimi.rate",
+                    title: seconds == 5 * 3_600 ? "5 Hours" : windowTitle(seconds),
+                    shortLabel: seconds == 5 * 3_600 ? "5h" : windowShortLabel(seconds),
+                    detail: detail,
+                    windowSeconds: seconds
+                ) else { continue }
+                buckets.append(rate)
+                break
+            }
+        }
+
+        guard !buckets.isEmpty else {
+            throw QuotaError.parseFailure("Kimi Code usage response had no usable windows")
+        }
+        return Snapshot(buckets: canonicalBucketOrder(buckets))
     }
 
     static func parseMonthly(data: Data) throws -> QuotaBucket? {
@@ -705,6 +967,81 @@ enum KimiResponseParser {
             resetAt: resetAt,
             rawWindowSeconds: windowSeconds
         )
+    }
+
+    private static func codingPlanBucket(
+        id: String,
+        title: String,
+        shortLabel: String,
+        detail: [String: Any],
+        windowSeconds: Int
+    ) -> QuotaBucket? {
+        guard let limit = number(detail["limit"]), limit > 0 else { return nil }
+        let used: Double
+        if let explicit = number(detail["used"]) {
+            used = explicit
+        } else if let remaining = number(detail["remaining"]) {
+            used = max(0, limit - remaining)
+        } else {
+            used = 0
+        }
+        return QuotaBucket(
+            id: id,
+            title: title,
+            shortLabel: shortLabel,
+            usedPercent: max(0, min(100, used / limit * 100)),
+            resetAt: parseResetValue(detail["resetTime"] ?? detail["reset_time"]),
+            rawWindowSeconds: windowSeconds
+        )
+    }
+
+    private static func codingPlanWindowSeconds(_ window: [String: Any]?) -> Int? {
+        guard let window,
+              let duration = number(window["duration"]).map(Int.init),
+              duration > 0,
+              let unit = window["timeUnit"] as? String ?? window["time_unit"] as? String
+        else { return nil }
+        switch unit.uppercased().replacingOccurrences(of: "TIME_UNIT_", with: "") {
+        case "SECOND", "SECONDS": return duration
+        case "MINUTE", "MINUTES": return duration * 60
+        case "HOUR", "HOURS": return duration * 3_600
+        case "DAY", "DAYS": return duration * 86_400
+        case "WEEK", "WEEKS": return duration * 7 * 86_400
+        default: return nil
+        }
+    }
+
+    private static func windowTitle(_ seconds: Int) -> String {
+        if seconds >= 86_400 { return "\(seconds / 86_400) Days" }
+        if seconds >= 3_600 { return "\(seconds / 3_600) Hours" }
+        return "\(max(1, seconds / 60)) Minutes"
+    }
+
+    private static func windowShortLabel(_ seconds: Int) -> String {
+        if seconds >= 86_400 { return "\(seconds / 86_400)d" }
+        if seconds >= 3_600 { return "\(seconds / 3_600)h" }
+        return "\(max(1, seconds / 60))m"
+    }
+
+    private static func number(_ raw: Any?) -> Double? {
+        switch raw {
+        case let value as NSNumber: return value.doubleValue
+        case let value as String: return Double(value.trimmingCharacters(in: .whitespacesAndNewlines))
+        default: return nil
+        }
+    }
+
+    private static func parseResetValue(_ raw: Any?) -> Date? {
+        if let string = raw as? String {
+            if let numeric = Double(string) { return timestamp(numeric) }
+            return parseResetTime(string)
+        }
+        return number(raw).flatMap(timestamp)
+    }
+
+    private static func timestamp(_ raw: Double) -> Date? {
+        guard raw.isFinite, raw > 0 else { return nil }
+        return Date(timeIntervalSince1970: raw >= 1_000_000_000_000 ? raw / 1_000 : raw)
     }
 
     private static func parseResetTime(_ raw: String?) -> Date? {

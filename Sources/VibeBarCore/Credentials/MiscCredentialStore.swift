@@ -8,8 +8,11 @@ import Foundation
 /// non-sensitive fields (region, source mode, enterprise host) live
 /// in `~/.vibebar/settings.json` — see `MiscProviderSettings`.
 public enum MiscCredentialStore {
-    public static let keychainService = "com.astroqore.VibeBar.misc-secrets"
-    private static let legacyKeychainService = "com.astroqore.VibeBar.misc"
+    public static let keychainService = "com.lifeodyssey.CodeCLIBar.misc-secrets"
+    /// Legacy means an earlier Code CLI Bar schema, never the upstream Vibe
+    /// Bar namespace. Importing Vibe Bar credentials requires explicit user
+    /// approval and therefore cannot happen in this automatic migration path.
+    private static let legacyKeychainService = "com.lifeodyssey.CodeCLIBar.misc"
 
     /// Account-name suffixes for the secret kinds vibe-bar's misc
     /// adapters need. Adding a new kind requires updating this enum

@@ -25,20 +25,48 @@ public enum CostUsageScanner {
         homeDirectory: String = RealHomeDirectory.path,
         now: Date = Date(),
         retentionDays: Int? = nil,
-        eventSink: (any CostUsageEventSink)? = nil
+        eventSink: (any CostUsageEventSink)? = nil,
+        sourcePath: String? = nil
     ) async -> CostSnapshot? {
         switch tool {
         case .codex:
-            return await scanCodex(homeDirectory: homeDirectory, now: now, retentionDays: retentionDays, eventSink: eventSink)
+            return await scanCodex(
+                homeDirectory: homeDirectory,
+                now: now,
+                retentionDays: retentionDays,
+                eventSink: eventSink,
+                sourcePath: sourcePath
+            )
         case .claude:
-            return await scanClaude(homeDirectory: homeDirectory, now: now, retentionDays: retentionDays, eventSink: eventSink)
+            return await scanClaude(
+                homeDirectory: homeDirectory,
+                now: now,
+                retentionDays: retentionDays,
+                eventSink: eventSink,
+                sourcePath: sourcePath
+            )
         case .gemini:
             return await scanGemini(homeDirectory: homeDirectory, now: now, retentionDays: retentionDays, eventSink: eventSink)
         case .grok:
-            return await scanGrok(homeDirectory: homeDirectory, now: now, retentionDays: retentionDays, eventSink: eventSink)
+            return await scanGrok(
+                homeDirectory: homeDirectory,
+                now: now,
+                retentionDays: retentionDays,
+                eventSink: eventSink,
+                sourcePath: sourcePath
+            )
         case .antigravity:
             return await scanAntigravity(homeDirectory: homeDirectory, now: now, retentionDays: retentionDays, eventSink: eventSink)
-        case .alibaba, .alibabaTokenPlan, .copilot, .zai, .minimax, .kimi, .cursor, .mimo, .iflytek, .tencentHunyuan, .tencentTokenPlan, .volcengine, .volcengineAgentPlan, .baiduQianfan, .openCodeGo, .kilo, .kiro, .ollama, .openRouter, .warp:
+        case .zai, .kimi, .openCodeGo, .dsh:
+            return await CodeCLIUsageScanner.scan(
+                tool: tool,
+                homeDirectory: homeDirectory,
+                now: now,
+                retentionDays: retentionDays,
+                eventSink: eventSink,
+                sourcePath: sourcePath
+            )
+        case .alibaba, .alibabaTokenPlan, .copilot, .minimax, .cursor, .mimo, .iflytek, .tencentHunyuan, .tencentTokenPlan, .volcengine, .volcengineAgentPlan, .baiduQianfan, .kilo, .kiro, .ollama, .openRouter, .warp:
             // Misc providers don't expose token-level cost data through
             // any documented public protocol. The cost-history pipeline
             // is gated by `tool.supportsTokenCost` upstream. Returning
@@ -54,13 +82,19 @@ public enum CostUsageScanner {
         homeDirectory: String,
         now: Date,
         retentionDays: Int?,
-        eventSink: (any CostUsageEventSink)? = nil
+        eventSink: (any CostUsageEventSink)? = nil,
+        sourcePath: String? = nil
     ) async -> CostSnapshot {
-        let roots = [
-            URL(fileURLWithPath: homeDirectory).appendingPathComponent(".codex/sessions"),
-            URL(fileURLWithPath: homeDirectory).appendingPathComponent(".codex/archived_sessions")
-        ]
-        let files = roots.flatMap { collectJSONL(under: $0) }
+        let files: [URL]
+        if let source = resolvedCustomSource(sourcePath, homeDirectory: homeDirectory) {
+            files = collectJSONLOrSingleFile(at: source)
+        } else {
+            let roots = [
+                URL(fileURLWithPath: homeDirectory).appendingPathComponent(".codex/sessions"),
+                URL(fileURLWithPath: homeDirectory).appendingPathComponent(".codex/archived_sessions")
+            ]
+            files = roots.flatMap { collectJSONL(under: $0) }
+        }
         // Codex bills the whole install at one service tier; it isn't
         // stamped on each token event, so resolve it once and apply it
         // to every codex event in this scan (mirrors ccusage).
@@ -224,14 +258,20 @@ public enum CostUsageScanner {
         homeDirectory: String,
         now: Date,
         retentionDays: Int?,
-        eventSink: (any CostUsageEventSink)? = nil
+        eventSink: (any CostUsageEventSink)? = nil,
+        sourcePath: String? = nil
     ) async -> CostSnapshot {
-        let projectsRoot = URL(fileURLWithPath: homeDirectory).appendingPathComponent(".claude/projects")
-        let altRoot = URL(fileURLWithPath: homeDirectory).appendingPathComponent(".config/claude/projects")
-        let coworkRoot = claudeCoworkRoot(homeDirectory: homeDirectory)
-        let files = collectJSONL(under: projectsRoot)
-            + collectJSONL(under: altRoot)
-            + collectClaudeCoworkJSONL(under: coworkRoot)
+        let files: [URL]
+        if let source = resolvedCustomSource(sourcePath, homeDirectory: homeDirectory) {
+            files = collectJSONLOrSingleFile(at: source)
+        } else {
+            let projectsRoot = URL(fileURLWithPath: homeDirectory).appendingPathComponent(".claude/projects")
+            let altRoot = URL(fileURLWithPath: homeDirectory).appendingPathComponent(".config/claude/projects")
+            let coworkRoot = claudeCoworkRoot(homeDirectory: homeDirectory)
+            files = collectJSONL(under: projectsRoot)
+                + collectJSONL(under: altRoot)
+                + collectClaudeCoworkJSONL(under: coworkRoot)
+        }
         var aggregator = CostAggregator(tool: .claude, now: now)
         var cache = CostUsageScanCache.load(homeDirectory: homeDirectory, tool: .claude, retentionDays: retentionDays)
         let cutoff = retentionCutoff(now: now, retentionDays: retentionDays)
@@ -670,11 +710,12 @@ public enum CostUsageScanner {
         homeDirectory: String,
         now: Date,
         retentionDays: Int?,
-        eventSink: (any CostUsageEventSink)? = nil
+        eventSink: (any CostUsageEventSink)? = nil,
+        sourcePath: String? = nil
     ) async -> CostSnapshot {
-        let root = URL(fileURLWithPath: homeDirectory)
-            .appendingPathComponent(".grok/sessions")
-        let files = collectGrokUpdatesFiles(under: root)
+        let root = resolvedCustomSource(sourcePath, homeDirectory: homeDirectory)
+            ?? URL(fileURLWithPath: homeDirectory).appendingPathComponent(".grok/sessions")
+        let files = regularFile(root) ? [root] : collectGrokUpdatesFiles(under: root)
         var aggregator = CostAggregator(tool: .grok, now: now)
         var cache = CostUsageScanCache.load(homeDirectory: homeDirectory, tool: .grok, retentionDays: retentionDays)
         let cutoff = retentionCutoff(now: now, retentionDays: retentionDays)
@@ -1429,7 +1470,9 @@ public enum CostUsageScanner {
                 cacheCreationInputTokens: cacheCreation,
                 outputTokens: event.output
             )
-        case .alibaba, .alibabaTokenPlan, .copilot, .zai, .minimax, .kimi, .cursor, .mimo, .iflytek, .tencentHunyuan, .tencentTokenPlan, .volcengine, .volcengineAgentPlan, .baiduQianfan, .openCodeGo, .kilo, .kiro, .ollama, .openRouter, .warp:
+        case .zai, .kimi, .openCodeGo, .dsh:
+            return CodeCLIUsagePricing.costUSD(tool: tool, event: event)
+        case .alibaba, .alibabaTokenPlan, .copilot, .minimax, .cursor, .mimo, .iflytek, .tencentHunyuan, .tencentTokenPlan, .volcengine, .volcengineAgentPlan, .baiduQianfan, .kilo, .kiro, .ollama, .openRouter, .warp:
             return nil
         }
     }
@@ -1558,7 +1601,9 @@ public enum CostUsageScanner {
         var todayCost: Double = 0, todayTokens: Int = 0, todayRequests: Int = 0
         var weekCost: Double = 0, weekTokens: Int = 0, weekRequests: Int = 0
         var monthCost: Double = 0, monthTokens: Int = 0, monthRequests: Int = 0
-        var byDay: [Date: (cost: Double, tokens: Int)] = [:]
+        var totalUnpricedRequests = 0, todayUnpricedRequests = 0
+        var weekUnpricedRequests = 0, monthUnpricedRequests = 0
+        var byDay: [Date: (cost: Double, tokens: Int, requests: Int, unpriced: Int)] = [:]
         /// Per-hour buckets across the whole retained hourly window, not just
         /// yesterday and today — the chart's Hour mode needs evidence wherever
         /// the user can navigate to inside the window.
@@ -1591,29 +1636,54 @@ public enum CostUsageScanner {
         }
 
         mutating func add(at date: Date, model: String, input: Int, output: Int, cache: Int, costUSD: Double) {
+            add(
+                at: date,
+                model: model,
+                input: input,
+                output: output,
+                cache: cache,
+                optionalCostUSD: costUSD
+            )
+        }
+
+        mutating func add(
+            at date: Date,
+            model: String,
+            input: Int,
+            output: Int,
+            cache: Int,
+            optionalCostUSD: Double?
+        ) {
+            let costUSD = optionalCostUSD ?? 0
             let tokens = input + output + cache
             totalCost += costUSD
             totalTokens += tokens
             totalRequests += 1
+            if optionalCostUSD == nil { totalUnpricedRequests += 1 }
             if date >= startOfToday {
                 todayCost += costUSD
                 todayTokens += tokens
                 todayRequests += 1
+                if optionalCostUSD == nil { todayUnpricedRequests += 1 }
             }
             if date >= weekCutoff {
                 weekCost += costUSD
                 weekTokens += tokens
                 weekRequests += 1
+                if optionalCostUSD == nil { weekUnpricedRequests += 1 }
             }
             if date >= monthCutoff {
                 monthCost += costUSD
                 monthTokens += tokens
                 monthRequests += 1
+                if optionalCostUSD == nil { monthUnpricedRequests += 1 }
             }
             let dayKey = calendar.startOfDay(for: date)
-            var bucket = byDay[dayKey] ?? (0, 0)
+            var bucket = byDay[dayKey] ?? (0, 0, 0, 0)
             bucket.cost += costUSD
             bucket.tokens += tokens
+            bucket.requests += 1
+            if optionalCostUSD == nil { bucket.unpriced += 1 }
             byDay[dayKey] = bucket
 
             // One hourly lane for the whole retained window. Events dated after
@@ -1693,7 +1763,15 @@ public enum CostUsageScanner {
         func snapshot(jsonlFilesFound: Int) -> CostSnapshot {
             let sortedDays = byDay
                 .sorted { $0.key < $1.key }
-                .map { DailyCostPoint(date: $0.key, costUSD: $0.value.cost, totalTokens: $0.value.tokens) }
+                .map {
+                    DailyCostPoint(
+                        date: $0.key,
+                        costUSD: $0.value.cost,
+                        totalTokens: $0.value.tokens,
+                        requests: $0.value.requests,
+                        unpricedRequests: $0.value.unpriced
+                    )
+                }
             let currentHourStart = calendar.dateInterval(of: .hour, for: now)?.start ?? startOfToday
             let hourlyToday = hourlyPoints(forDayStarting: startOfToday, notAfter: currentHourStart)
             let hourlyYesterday = hourlyPoints(forDayStarting: startOfYesterday, notAfter: nil)
@@ -1747,6 +1825,10 @@ public enum CostUsageScanner {
                 last7DaysRequests: weekRequests,
                 last30DaysRequests: monthRequests,
                 allTimeRequests: totalRequests,
+                todayUnpricedRequests: todayUnpricedRequests,
+                last7DaysUnpricedRequests: weekUnpricedRequests,
+                last30DaysUnpricedRequests: monthUnpricedRequests,
+                allTimeUnpricedRequests: totalUnpricedRequests,
                 dailyHistory: sortedDays,
                 todayHourlyHistory: hourlyToday,
                 yesterdayHourlyHistory: hourlyYesterday,
@@ -1764,6 +1846,33 @@ public enum CostUsageScanner {
     }
 
     // MARK: - Helpers
+
+    private static func resolvedCustomSource(
+        _ path: String?,
+        homeDirectory: String
+    ) -> URL? {
+        guard let path = path?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !path.isEmpty
+        else { return nil }
+        if path == "~" { return URL(fileURLWithPath: homeDirectory, isDirectory: true) }
+        if path.hasPrefix("~/") {
+            return URL(fileURLWithPath: homeDirectory, isDirectory: true)
+                .appendingPathComponent(String(path.dropFirst(2)))
+        }
+        if path.hasPrefix("/") { return URL(fileURLWithPath: path) }
+        return URL(fileURLWithPath: homeDirectory, isDirectory: true)
+            .appendingPathComponent(path)
+    }
+
+    private static func collectJSONLOrSingleFile(at source: URL) -> [URL] {
+        regularFile(source) ? [source] : collectJSONL(under: source)
+    }
+
+    private static func regularFile(_ url: URL) -> Bool {
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        else { return false }
+        return values.isRegularFile == true && values.isSymbolicLink != true
+    }
 
     private static func collectJSONL(under root: URL) -> [URL] {
         guard FileManager.default.fileExists(atPath: root.path) else { return [] }

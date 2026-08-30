@@ -89,14 +89,20 @@ final class PartialPrimaryToolTypeTests: XCTestCase {
     func testCostAwareProvidersIncludeGoogleAIAndGrokFamily() {
         XCTAssertEqual(
             ToolType.costAwareProviders,
-            [.codex, .claude, .gemini, .antigravity, .grok, .cursor]
+            [
+                .codex, .claude, .gemini, .antigravity, .grok,
+                .zai, .kimi, .cursor, .openCodeGo, .dsh
+            ]
         )
     }
 
     func testUsageStatsKeepsCursorAsSubProvider() {
         XCTAssertEqual(
             ToolType.usageStatsProviders,
-            [.codex, .claude, .gemini, .antigravity, .grok, .cursor]
+            [
+                .codex, .claude, .gemini, .antigravity, .grok,
+                .zai, .kimi, .cursor, .openCodeGo, .dsh
+            ]
         )
     }
 

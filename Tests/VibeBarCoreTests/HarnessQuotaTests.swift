@@ -42,7 +42,7 @@ final class HarnessQuotaTests: XCTestCase {
         XCTAssertEqual(Harness.cursor.companyName, "SpaceXAI")
     }
 
-    func testDefaultHarnessCoversEveryCostAwareToolAndNothingElse() {
+    func testDefaultHarnessCoversInheritedCostToolsWithoutMislabelingProductOnlySources() {
         XCTAssertEqual(Harness.defaultHarness(for: .codex), .codex)
         XCTAssertEqual(Harness.defaultHarness(for: .claude), .claudeCode)
         XCTAssertEqual(Harness.defaultHarness(for: .gemini), .geminiCLI)
@@ -50,14 +50,19 @@ final class HarnessQuotaTests: XCTestCase {
         XCTAssertEqual(Harness.defaultHarness(for: .grok), .grokBuild)
         XCTAssertEqual(Harness.defaultHarness(for: .cursor), .cursor)
 
+        let productOnlySources: Set<ToolType> = [.zai, .kimi, .openCodeGo, .dsh]
+
         for tool in ToolType.allCases {
-            if tool.supportsTokenCost {
+            if tool.supportsTokenCost && !productOnlySources.contains(tool) {
                 XCTAssertNotNil(
                     Harness.defaultHarness(for: tool),
                     "\(tool) is scanned for cost and needs a harness to attribute rows to"
                 )
             } else {
-                XCTAssertNil(Harness.defaultHarness(for: tool), "\(tool) has no local harness")
+                XCTAssertNil(
+                    Harness.defaultHarness(for: tool),
+                    "\(tool) must not be attributed to an unrelated inherited harness"
+                )
             }
         }
     }

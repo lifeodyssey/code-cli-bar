@@ -48,4 +48,31 @@ final class QuotaBucketTests: XCTestCase {
         let restored = try JSONDecoder().decode(QuotaBucket.self, from: cachedJSON)
         XCTAssertEqual(restored.shortLabel, "Weekly")
     }
+
+    func testCompactDetailTitleKeepsScopedWeeklyBucketsDistinct() {
+        let primary = QuotaBucket(
+            id: "weekly",
+            title: "Weekly",
+            shortLabel: "Weekly",
+            usedPercent: 62
+        )
+        let spark = QuotaBucket(
+            id: "gpt_5_3_codex_spark_weekly",
+            title: "Weekly",
+            shortLabel: "Spark Weekly",
+            usedPercent: 0,
+            groupTitle: "GPT-5.3 Codex Spark"
+        )
+        let scopedWithoutDistinctShortLabel = QuotaBucket(
+            id: "weekly_fallback",
+            title: "Weekly",
+            shortLabel: "Weekly",
+            usedPercent: 0,
+            groupTitle: "Fable"
+        )
+
+        XCTAssertEqual(primary.compactDetailTitle, "Weekly")
+        XCTAssertEqual(spark.compactDetailTitle, "Spark Weekly")
+        XCTAssertEqual(scopedWithoutDistinctShortLabel.compactDetailTitle, "Fable Weekly")
+    }
 }

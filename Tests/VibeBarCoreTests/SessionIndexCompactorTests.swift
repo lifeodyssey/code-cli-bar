@@ -161,7 +161,7 @@ final class SessionIndexCompactorTests: XCTestCase {
         let home = base.appendingPathComponent("home", isDirectory: true)
         let victim = base.appendingPathComponent("victim", isDirectory: true)
         try fileManager.createDirectory(
-            at: home.appendingPathComponent(".vibebar", isDirectory: true),
+            at: home.appendingPathComponent(VibeBarLocalStore.directoryName, isDirectory: true),
             withIntermediateDirectories: true
         )
         try fileManager.createDirectory(at: victim, withIntermediateDirectories: true)
