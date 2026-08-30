@@ -36,3 +36,20 @@ jobs:
 
       - name: Test
         run: swift test
+
+      - name: Validate release automation
+        run: |
+          bash -n \
+            Scripts/build_app.sh \
+            Scripts/release_app.sh \
+            Scripts/generate_update_feed.sh
+          ./Scripts/release_app.sh --help
+
+      - name: Package release app
+        run: ./Scripts/build_app.sh release
+
+      - name: Verify packaged app
+        run: |
+          codesign --verify --deep --strict ".build/Code CLI Bar.app"
+          test -f ".build/Code CLI Bar.app/Contents/Resources/CodeCLIBarIcon.icns"
+          test "$(plutil -extract CFBundleIdentifier raw -o - '.build/Code CLI Bar.app/Contents/Info.plist')" = "com.lifeodyssey.CodeCLIBar"

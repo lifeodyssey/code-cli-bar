@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Produce a verified GitHub Release asset for the version in Info.plist.
+# Produce verified Code CLI Bar release assets for the version in Info.plist.
 #
 # Usage:
 #   ./Scripts/release_app.sh [--channel main|dev] [--base-appcast <path>] [tag]
 #
 # Default output:
-#   .build/release/Vibe-Bar-<version>[-dev.<build>]-macOS-<arch>.zip
-#   .build/release/Vibe-Bar-<version>[-dev.<build>]-macOS-<arch>.zip.sha256
-#   .build/release/appcast.xml
+#   .build/release/Code-CLI-Bar-<version>[-dev.<build>]-macOS-<arch>.zip
+#   .build/release/Code-CLI-Bar-<version>[-dev.<build>]-macOS-<arch>.zip.sha256
+#   .build/release/appcast.xml (only when Sparkle signing is enabled)
 #
 # Without extra environment variables the app is ad-hoc signed. To create a
-# public Developer ID build, set VIBEBAR_CODESIGN_IDENTITY and one notarization
-# credential method:
+# public Developer ID build, set CODE_CLI_BAR_CODESIGN_IDENTITY and one
+# notarization credential method:
 #
-#   VIBEBAR_NOTARY_KEYCHAIN_PROFILE=<notarytool-profile>
+#   CODE_CLI_BAR_NOTARY_KEYCHAIN_PROFILE=<notarytool-profile>
 #
 # or all of:
 #
@@ -24,25 +24,29 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PLIST="$ROOT/Resources/Info.plist"
-APP_DIR="$ROOT/.build/Vibe Bar.app"
+APP_DIR="$ROOT/.build/Code CLI Bar.app"
 DIST_DIR="$ROOT/.build/release"
-SIGN_IDENTITY="${VIBEBAR_CODESIGN_IDENTITY:--}"
-SPARKLE_KEY_ACCOUNT="${VIBEBAR_SPARKLE_KEY_ACCOUNT:-astroqore-vibe-bar}"
-RELEASE_CHANNEL="${VIBEBAR_RELEASE_CHANNEL:-main}"
-BASE_APPCAST="${VIBEBAR_BASE_APPCAST:-}"
+SIGN_IDENTITY="${CODE_CLI_BAR_CODESIGN_IDENTITY:-${VIBEBAR_CODESIGN_IDENTITY:--}}"
+SPARKLE_KEY_ACCOUNT="${CODE_CLI_BAR_SPARKLE_KEY_ACCOUNT:-${VIBEBAR_SPARKLE_KEY_ACCOUNT:-lifeodyssey-code-cli-bar}}"
+RELEASE_CHANNEL="${CODE_CLI_BAR_RELEASE_CHANNEL:-${VIBEBAR_RELEASE_CHANNEL:-main}}"
+BASE_APPCAST="${CODE_CLI_BAR_BASE_APPCAST:-${VIBEBAR_BASE_APPCAST:-}}"
+REPOSITORY="${CODE_CLI_BAR_GITHUB_REPOSITORY:-${GITHUB_REPOSITORY:-lifeodyssey/code-cli-bar}}"
+NOTARY_KEYCHAIN_PROFILE="${CODE_CLI_BAR_NOTARY_KEYCHAIN_PROFILE:-${VIBEBAR_NOTARY_KEYCHAIN_PROFILE:-}}"
 POSITIONAL_TAG=""
+SKIP_APPCAST=0
 
 usage() {
     printf '%s\n' \
-        "Produce a verified GitHub Release asset for the version in Info.plist." \
+        "Produce verified Code CLI Bar release assets from Info.plist." \
         "" \
-        "Usage: ./Scripts/release_app.sh [--channel main|dev] [--base-appcast <path>] [tag]" \
+        "Usage: ./Scripts/release_app.sh [--channel main|dev] [--base-appcast <path>] [--skip-appcast] [tag]" \
         "" \
         "Main tag: v<version>" \
         "Dev tag:  v<version>-dev.<CFBundleVersion>" \
         "" \
-        "Signing defaults to ad-hoc. See RELEASING.md for Developer ID" \
-        "signing, notarization, GitHub secrets, and publishing instructions."
+        "Use --skip-appcast until a Sparkle EdDSA key is configured." \
+        "Signing defaults to ad-hoc. See RELEASING.md for Developer ID," \
+        "notarization, Sparkle, and publishing instructions."
 }
 
 while [[ $# -gt 0 ]]; do
@@ -62,6 +66,10 @@ while [[ $# -gt 0 ]]; do
             fi
             BASE_APPCAST="$2"
             shift 2
+            ;;
+        --skip-appcast)
+            SKIP_APPCAST=1
+            shift
             ;;
         --help|-h)
             usage
@@ -95,7 +103,7 @@ fi
 
 VERSION="$(plutil -extract CFBundleShortVersionString raw -o - "$PLIST")"
 BUILD_NUMBER="$(plutil -extract CFBundleVersion raw -o - "$PLIST")"
-RELEASE_TAG="${POSITIONAL_TAG:-${VIBEBAR_RELEASE_TAG:-}}"
+RELEASE_TAG="${POSITIONAL_TAG:-${CODE_CLI_BAR_RELEASE_TAG:-${VIBEBAR_RELEASE_TAG:-}}}"
 if [[ -z "$RELEASE_TAG" ]]; then
     if [[ "$RELEASE_CHANNEL" == "dev" ]]; then
         RELEASE_TAG="v$VERSION-dev.$BUILD_NUMBER"
@@ -119,17 +127,17 @@ else
     fi
 fi
 
-if [[ "${VIBEBAR_SKIP_TESTS:-0}" != "1" ]]; then
+if [[ "${CODE_CLI_BAR_SKIP_TESTS:-${VIBEBAR_SKIP_TESTS:-0}}" != "1" ]]; then
     echo "==> running full test suite"
     (cd "$ROOT" && swift test)
 fi
 
-echo "==> building Vibe Bar $VERSION ($BUILD_NUMBER)"
+echo "==> building Code CLI Bar $VERSION ($BUILD_NUMBER)"
 (cd "$ROOT" && ./Scripts/build_app.sh release)
 
 echo "==> verifying bundled pricing resources"
 if [[ ! -f "$APP_DIR/Contents/Resources/VibeBar_VibeBarCore.bundle/pricing.json" ]]; then
-    echo "Refusing to release an app without the VibeBarCore resource bundle." >&2
+    echo "Refusing to release Code CLI Bar without its core resource bundle." >&2
     exit 1
 fi
 
@@ -137,7 +145,7 @@ echo "==> verifying bundle signature"
 codesign --verify --deep --strict "$APP_DIR"
 ENTITLEMENTS="$(codesign -d --entitlements - "$APP_DIR" 2>&1)"
 if grep -q 'com.apple.security.app-sandbox' <<<"$ENTITLEMENTS"; then
-    echo "Refusing to release a sandboxed Vibe Bar bundle." >&2
+    echo "Refusing to release a sandboxed Code CLI Bar bundle." >&2
     exit 1
 fi
 
@@ -165,7 +173,7 @@ VERSION_LABEL="$VERSION"
 if [[ "$RELEASE_CHANNEL" == "dev" ]]; then
     VERSION_LABEL="$VERSION-dev.$BUILD_NUMBER"
 fi
-ARCHIVE="$DIST_DIR/Vibe-Bar-$VERSION_LABEL-macOS-$ARCH_LABEL.zip"
+ARCHIVE="$DIST_DIR/Code-CLI-Bar-$VERSION_LABEL-macOS-$ARCH_LABEL.zip"
 
 package_app() {
     rm -f "$ARCHIVE"
@@ -176,9 +184,9 @@ package_app
 
 if [[ "$SIGN_IDENTITY" != "-" ]]; then
     echo "==> notarizing Developer ID build"
-    if [[ -n "${VIBEBAR_NOTARY_KEYCHAIN_PROFILE:-}" ]]; then
+    if [[ -n "$NOTARY_KEYCHAIN_PROFILE" ]]; then
         xcrun notarytool submit "$ARCHIVE" \
-            --keychain-profile "$VIBEBAR_NOTARY_KEYCHAIN_PROFILE" \
+            --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" \
             --wait
     elif [[ -n "${APPLE_ID:-}" && -n "${APPLE_TEAM_ID:-}" && -n "${APPLE_APP_PASSWORD:-}" ]]; then
         xcrun notarytool submit "$ARCHIVE" \
@@ -188,7 +196,7 @@ if [[ "$SIGN_IDENTITY" != "-" ]]; then
             --wait
     else
         echo "Developer ID signing requires notarization credentials." >&2
-        echo "Set VIBEBAR_NOTARY_KEYCHAIN_PROFILE, or APPLE_ID, APPLE_TEAM_ID," >&2
+        echo "Set CODE_CLI_BAR_NOTARY_KEYCHAIN_PROFILE, or APPLE_ID, APPLE_TEAM_ID," >&2
         echo "and APPLE_APP_PASSWORD." >&2
         exit 1
     fi
@@ -201,6 +209,25 @@ if [[ "$SIGN_IDENTITY" != "-" ]]; then
 else
     echo "==> ad-hoc release asset (Gatekeeper will require manual approval)"
 fi
+
+CHECKSUM="$ARCHIVE.sha256"
+(cd "$DIST_DIR" && shasum -a 256 "$(basename "$ARCHIVE")" > "$(basename "$CHECKSUM")")
+
+if [[ "$SKIP_APPCAST" == "1" ]]; then
+    echo "==> Sparkle appcast skipped (no update-signing key configured)"
+    echo "==> release assets ready"
+    echo "$ARCHIVE"
+    echo "$CHECKSUM"
+    exit 0
+fi
+
+for sparkle_key in SUPublicEDKey SUFeedURL; do
+    if ! plutil -extract "$sparkle_key" raw -o - "$PLIST" >/dev/null 2>&1; then
+        echo "Cannot publish a Sparkle appcast until $sparkle_key is configured in Info.plist." >&2
+        echo "Use --skip-appcast for a download-only GitHub Release." >&2
+        exit 1
+    fi
+done
 
 GENERATE_APPCAST="$(
     find "$ROOT/.build/artifacts/sparkle" \
@@ -215,13 +242,13 @@ if [[ -z "$GENERATE_APPCAST" || ! -x "$GENERATE_APPCAST" ]]; then
 fi
 
 RELEASE_NOTES="$DIST_DIR/$(basename "${ARCHIVE%.zip}").md"
-printf '# Vibe Bar %s (%s)\n\nSee the [full release notes](https://github.com/AstroQore/vibe-bar/releases/tag/%s).\n' \
-    "$VERSION" "$RELEASE_CHANNEL" "$RELEASE_TAG" > "$RELEASE_NOTES"
+printf '# Code CLI Bar %s (%s)\n\nSee the [full release notes](https://github.com/%s/releases/tag/%s).\n' \
+    "$VERSION" "$RELEASE_CHANNEL" "$REPOSITORY" "$RELEASE_TAG" > "$RELEASE_NOTES"
 
 echo "==> generating signed Sparkle appcast ($RELEASE_CHANNEL channel)"
 APPCAST_ARGS=(
-    --download-url-prefix "https://github.com/AstroQore/vibe-bar/releases/download/$RELEASE_TAG/"
-    --link "https://github.com/AstroQore/vibe-bar/releases/tag/$RELEASE_TAG"
+    --download-url-prefix "https://github.com/$REPOSITORY/releases/download/$RELEASE_TAG/"
+    --link "https://github.com/$REPOSITORY/releases/tag/$RELEASE_TAG"
     --embed-release-notes
     --maximum-versions 0
     -o "$DIST_DIR/appcast.xml"
@@ -257,9 +284,6 @@ if [[ "$RELEASE_CHANNEL" == "dev" ]] \
     echo "Generated appcast does not mark build $BUILD_NUMBER as dev." >&2
     exit 1
 fi
-
-CHECKSUM="$ARCHIVE.sha256"
-(cd "$DIST_DIR" && shasum -a 256 "$(basename "$ARCHIVE")" > "$(basename "$CHECKSUM")")
 
 echo "==> release assets ready"
 echo "$ARCHIVE"

@@ -11,6 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/lifeodyssey/code-cli-bar/actions/workflows/ci.yml"><img src="https://github.com/lifeodyssey/code-cli-bar/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/lifeodyssey/code-cli-bar/actions/workflows/release.yml"><img src="https://github.com/lifeodyssey/code-cli-bar/actions/workflows/release.yml/badge.svg" alt="Release"></a>
   <img src="https://img.shields.io/badge/macOS-26%2B-111827?logo=apple" alt="macOS 26+">
   <img src="https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white" alt="Swift 6.2">
   <img src="https://img.shields.io/badge/data-local--first-16a34a" alt="Local-first data">
@@ -95,6 +96,13 @@ approximation rather than accounting-grade billing.
   machine, session, request, and project identifiers before capture.
 
 ## Build it
+
+Reviewed builds appear on [GitHub Releases](https://github.com/lifeodyssey/code-cli-bar/releases).
+Every release includes an architecture-labelled ZIP and SHA-256 checksum. The
+tag-driven workflow creates a draft first, so its generated notes and artifacts
+can be inspected before publication. Until Apple Developer credentials are
+configured, those downloads are ad-hoc signed and macOS requires a one-time
+right-click → **Open** confirmation.
 
 Requirements: macOS 26+, Xcode 26, and Swift 6.2.
 
