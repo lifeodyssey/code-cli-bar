@@ -15,7 +15,8 @@ import VibeBarCore
 final class DemoPresenter {
     private let configuration: DemoMode.Configuration
     private let environment: AppEnvironment
-    private let statusItem: StatusItemController
+    private let statusItem: StatusItemController?
+    private let compactStatusItem: MinimalStatusItemController?
     private var backdrop: NSWindow?
 
     /// Quota caches are read synchronously, but cost snapshots, subscription
@@ -27,6 +28,18 @@ final class DemoPresenter {
         self.configuration = configuration
         self.environment = environment
         self.statusItem = statusItem
+        self.compactStatusItem = nil
+    }
+
+    init(
+        configuration: DemoMode.Configuration,
+        environment: AppEnvironment,
+        compactStatusItem: MinimalStatusItemController
+    ) {
+        self.configuration = configuration
+        self.environment = environment
+        self.statusItem = nil
+        self.compactStatusItem = compactStatusItem
     }
 
     /// The display every surface is put on: the sharpest one attached, so a
@@ -149,13 +162,12 @@ final class DemoPresenter {
 
     private func open(_ surface: DemoMode.Surface) {
         switch surface {
-        case let .popover(page):
-            let resolved = page.isEmpty ? .overview : OverviewPage(rawValue: page)
-            guard let resolved else { return warnUnknown(surface) }
-            statusItem.presentPopoverForDemo(page: resolved, anchor: popoverAnchor)
+        case .popover:
+            guard let compactStatusItem else { return warnUnknown(surface) }
+            compactStatusItem.presentPopoverForDemo(anchor: popoverAnchor)
         case let .miniWindow(mode):
             let resolved = mode.isEmpty ? .regular : MiniWindowDisplayMode(rawValue: mode)
-            guard let resolved else { return warnUnknown(surface) }
+            guard let resolved, let statusItem else { return warnUnknown(surface) }
             statusItem.presentMiniWindowForDemo(mode: resolved)
         case let .workbench(page):
             let resolved = page.isEmpty ? .usageStats : WorkbenchPage(rawValue: page)

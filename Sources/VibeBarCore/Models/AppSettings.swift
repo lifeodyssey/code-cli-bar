@@ -1515,7 +1515,7 @@ public enum ClaudeUsageMode: String, Codable, CaseIterable, Identifiable, Sendab
 
     public var detail: String {
         switch self {
-        case .auto: return "Use saved claude.ai cookies first; fall back to Claude OAuth and Claude Code."
+        case .auto: return "Use Claude Code first; fall back to Claude OAuth and saved claude.ai cookies."
         case .oauthThenCliThenWeb: return "Use Claude OAuth first; fall back to Claude Code and saved claude.ai cookies."
         case .cliThenWeb: return "Use Claude Code first; fall back to saved claude.ai cookies."
         case .webThenCli: return "Use saved claude.ai cookies first; fall back to Claude Code and OAuth."

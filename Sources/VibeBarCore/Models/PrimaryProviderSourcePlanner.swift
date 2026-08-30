@@ -63,7 +63,12 @@ public enum ClaudeSourcePlanner {
     public static func resolve(mode: ClaudeUsageMode) -> [CredentialSource] {
         switch mode {
         case .auto:
-            return [.webCookie, .oauthCLI, .cliDetected]
+            // Code CLI Bar is anchored to Claude Code's own account and
+            // provider-authored `~/.claude.json` quota cache. A saved web
+            // cookie may outlive the browser session and used to steal Auto
+            // selection from the still-valid CLI account, leaving the card
+            // empty even though Claude Code reported a current weekly cycle.
+            return [.cliDetected, .oauthCLI, .webCookie]
         case .oauthThenCliThenWeb:
             return [.oauthCLI, .cliDetected, .webCookie]
         case .cliThenWeb:

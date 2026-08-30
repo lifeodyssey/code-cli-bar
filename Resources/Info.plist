@@ -9,7 +9,7 @@
 	<key>CFBundleExecutable</key>
 	<string>VibeBar</string>
 	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
+	<string>CodeCLIBarIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.lifeodyssey.CodeCLIBar</string>
 	<key>CFBundleInfoDictionaryVersion</key>

@@ -65,8 +65,9 @@ cp "$ROOT/THIRD_PARTY_NOTICES.md" \
     "$APP_DIR/Contents/Resources/THIRD_PARTY_NOTICES.md"
 cp -R "$ROOT/Resources/ThirdPartyLicenses" \
     "$APP_DIR/Contents/Resources/ThirdPartyLicenses"
-if [[ -f "$ROOT/Resources/AppIcon.icns" ]]; then
-    cp "$ROOT/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
+if [[ -f "$ROOT/Resources/CodeCLIBarIcon.icns" ]]; then
+    cp "$ROOT/Resources/CodeCLIBarIcon.icns" \
+        "$APP_DIR/Contents/Resources/CodeCLIBarIcon.icns"
 fi
 if [[ -d "$ROOT/Resources/ProviderIcons" ]]; then
     cp -R "$ROOT/Resources/ProviderIcons" "$APP_DIR/Contents/Resources/ProviderIcons"

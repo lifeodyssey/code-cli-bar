@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Capture the README screenshots from Vibe Bar's demo mode.
+# Capture the README screenshots from Code CLI Bar's demo mode.
 #
 # For every surface below, in both appearances, this launches the packaged
 # app against a demo home (see Scripts/demo_home.py and DemoMode.swift),
@@ -10,14 +10,14 @@
 #   ./Scripts/build_app.sh release
 #   ./Scripts/demo_home.py
 #   ./Scripts/capture_demo_screenshots.sh            # → docs/screenshots/
-#   ./Scripts/capture_demo_screenshots.sh /tmp/shots popover:overview
+#   ./Scripts/capture_demo_screenshots.sh /tmp/shots popover
 #
 # Captures land on the sharpest attached display. Leave the mouse alone while
 # it runs — the popover is transient and a click would dismiss it.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-APP="${VIBEBAR_APP:-$REPO/.build/Vibe Bar.app}/Contents/MacOS/VibeBar"
+APP="${VIBEBAR_APP:-$REPO/.build/Code CLI Bar.app}/Contents/MacOS/VibeBar"
 DEMO_HOME="${VIBEBAR_DEMO_HOME:-/tmp/vibebar-demo-home}"
 OUT="${1:-$REPO/docs/screenshots}"
 MARGIN="${MARGIN:-28}"          # points of backdrop kept around a surface
@@ -29,22 +29,7 @@ shift $(( $# > 0 ? 1 : 0 ))
 # -light suffix. Every surface is captured dark; the light twin is kept for
 # the surfaces the README shows in both, which keeps the checked-in set small.
 SURFACES=(
-  "popover-overview=popover:overview=both"
-  "popover-openai=popover:openAI=dark"
-  "popover-anthropic=popover:claude=dark"
-  "popover-google=popover:googleAI=dark"
-  "popover-spacexai=popover:grok=dark"
-  "popover-misc=popover:misc=dark"
-  "popover-machines=popover:machines=dark"
-  "mini-regular=mini:regular=both"
-  "mini-compact=mini:compact=dark"
-  "workbench-usage=workbench:usageStats=both"
-  "workbench-sessions=workbench:sessionManager=both"
-  "workbench-skills=workbench:skillsManager=both"
-  "settings-layout=settings:layout=both"
-  "settings-menubar=settings:menuBar=dark"
-  "settings-mcp=settings:mcp=dark"
-  "settings-remote=settings:remote=dark"
+  "code-cli-bar=popover=both"
 )
 if (( $# > 0 )); then
   SURFACES=()
@@ -54,7 +39,7 @@ if (( $# > 0 )); then
 fi
 
 [[ -x "$APP" ]] || { echo "capture: no app at $APP — run ./Scripts/build_app.sh first" >&2; exit 1; }
-[[ -d "$DEMO_HOME/.vibebar" ]] || { echo "capture: no demo home at $DEMO_HOME — run ./Scripts/demo_home.py first" >&2; exit 1; }
+[[ -d "$DEMO_HOME/.code-cli-bar" ]] || { echo "capture: no demo home at $DEMO_HOME — run ./Scripts/demo_home.py first" >&2; exit 1; }
 mkdir -p "$OUT"
 
 capture_one() {

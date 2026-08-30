@@ -125,6 +125,92 @@ final class QuotaServiceFreshnessTests: XCTestCase {
         XCTAssertNil(service.currentCachedQuota(for: account.id, maxAge: 1_200))
     }
 
+    func testLastKnownQuotaKeepsOnlyBucketsInTheCurrentProviderCycle() async throws {
+        let now = Date()
+        let account = AccountIdentity(
+            id: "freshness-last-known-cycle",
+            tool: .claude,
+            source: .cliDetected
+        )
+        let service = QuotaService(
+            adapters: [.claude: FreshnessSequenceAdapter(results: [
+                .success(AccountQuota(
+                    accountId: account.id,
+                    tool: .claude,
+                    buckets: [
+                        QuotaBucket(
+                            id: "five_hour",
+                            title: "5 Hours",
+                            shortLabel: "5h",
+                            usedPercent: 70,
+                            resetAt: now.addingTimeInterval(-60),
+                            rawWindowSeconds: 18_000
+                        ),
+                        QuotaBucket(
+                            id: "weekly",
+                            title: "Weekly",
+                            shortLabel: "Weekly",
+                            usedPercent: 100,
+                            resetAt: now.addingTimeInterval(12 * 3_600),
+                            rawWindowSeconds: 604_800
+                        ),
+                        QuotaBucket(
+                            id: "unknown_cycle",
+                            title: "Unknown",
+                            shortLabel: "Unknown",
+                            usedPercent: 40,
+                            resetAt: nil
+                        )
+                    ],
+                    queriedAt: now.addingTimeInterval(-3 * 3_600)
+                ))
+            ])],
+            mockProvider: { false }
+        )
+
+        _ = await service.refresh(account)
+        let lastKnown = try XCTUnwrap(
+            service.lastKnownCurrentCycleQuota(for: account.id, now: now)
+        )
+
+        XCTAssertEqual(lastKnown.buckets.map(\.id), ["weekly"])
+        XCTAssertEqual(lastKnown.weeklyBucket?.usedPercent, 100)
+        XCTAssertNil(service.currentCachedQuota(for: account.id, maxAge: 1_200, now: now))
+    }
+
+    func testLastKnownQuotaRejectsImplausiblyFutureDatedSnapshots() async {
+        let now = Date()
+        let account = AccountIdentity(
+            id: "freshness-future-last-known",
+            tool: .claude,
+            source: .cliDetected
+        )
+        let service = QuotaService(
+            adapters: [.claude: FreshnessSequenceAdapter(results: [
+                .success(AccountQuota(
+                    accountId: account.id,
+                    tool: .claude,
+                    buckets: [QuotaBucket(
+                        id: "weekly",
+                        title: "Weekly",
+                        shortLabel: "Weekly",
+                        usedPercent: 100,
+                        resetAt: now.addingTimeInterval(86_400),
+                        rawWindowSeconds: 604_800
+                    )],
+                    queriedAt: now.addingTimeInterval(
+                        QuotaFreshnessPolicy.allowedClockSkew + 60
+                    )
+                ))
+            ])],
+            mockProvider: { false }
+        )
+
+        _ = await service.refresh(account)
+
+        XCTAssertNil(service.lastKnownCurrentCycleQuota(for: account.id, now: now))
+    }
+
     func testErrorBearingQuotaPreservesTheLastSuccessfulCache() async throws {
         let account = AccountIdentity(id: "embedded-error-cache", tool: .kimi, source: .browserCookie)
         let queriedAt = Date().addingTimeInterval(-8 * 3_600)

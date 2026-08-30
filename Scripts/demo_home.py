@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Build a demo home for Vibe Bar's demo mode.
+"""Build a demo home for Code CLI Bar's demo mode.
 
 Vibe Bar's README screenshots come from the real app pointed at a synthetic
 home directory (``VIBEBAR_DEMO_HOME``, see ``DemoMode.swift``). This script
-builds that directory from a maintainer's live ``~/.vibebar`` store:
+builds that directory from a maintainer's live ``~/.code-cli-bar`` store:
 
 * Quota caches, reset-cycle history, fill and forecast timelines, cost
   snapshots, cost history, the per-request usage ledger, cached provider
@@ -29,7 +29,7 @@ Usage::
 
     ./Scripts/demo_home.py                      # ~ → /tmp/vibebar-demo-home
     ./Scripts/demo_home.py --output ~/demo      # elsewhere
-    VIBEBAR_DEMO_HOME=/tmp/vibebar-demo-home ".build/Vibe Bar.app/Contents/MacOS/VibeBar"
+    VIBEBAR_DEMO_HOME=/tmp/vibebar-demo-home ".build/Code CLI Bar.app/Contents/MacOS/VibeBar"
 
 Requires only the Python 3 that ships with Xcode's command line tools.
 """
@@ -148,9 +148,9 @@ class Builder:
     def __init__(self, source_home: Path, output_home: Path, days: int, now: dt.datetime, seed: int, fresh_days: int = 7):
         self.fresh_days = fresh_days
         self.source_home = source_home
-        self.source = source_home / ".vibebar"
+        self.source = source_home / ".code-cli-bar"
         self.output_home = output_home
-        self.output = output_home / ".vibebar"
+        self.output = output_home / ".code-cli-bar"
         self.days = days
         self.now = now
         self.random = random.Random(seed)
@@ -245,7 +245,22 @@ class Builder:
             src = self.source / "quotas" / quota_cache_name(live)
             dst = self.output / "quotas" / quota_cache_name(demo)
             dst.parent.mkdir(parents=True, exist_ok=True)
-            dst.write_text(self.rewrite_text(src.read_text()))
+            data = json.loads(self.rewrite_text(src.read_text()))
+            quota = data.get("quota") or data
+            queried_at = quota.get("queriedAt")
+            if isinstance(queried_at, (int, float)):
+                fresh_at = ref_seconds(self.now)
+                shift = fresh_at - float(queried_at)
+                quota["queriedAt"] = fresh_at
+                # A screenshot should show a coherent current cycle, not a
+                # real cache's age. Preserve each bucket's remaining duration
+                # relative to its query while rebasing the synthetic copy to
+                # now; percentages and plan structure stay unchanged.
+                for bucket in quota.get("buckets", []):
+                    reset_at = bucket.get("resetAt")
+                    if isinstance(reset_at, (int, float)):
+                        bucket["resetAt"] = float(reset_at) + shift
+            write_json(dst, data)
 
     def build_timelines(self) -> None:
         cutoff = ref_seconds(self.now - dt.timedelta(days=self.days))
@@ -1117,7 +1132,7 @@ def skill_markdown(skill: dict) -> str:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--source", default=str(Path.home()), help="home directory to snapshot (default: ~)")
-    # Short on purpose: the demo home hosts ~/.vibebar/mcp.sock, and a Unix
+    # Short on purpose: the demo home hosts ~/.code-cli-bar/mcp.sock, and a Unix
     # socket path is limited to 104 bytes — a checkout deep in a worktree
     # tree would push it over.
     parser.add_argument(
@@ -1132,10 +1147,10 @@ def main(argv: list[str]) -> int:
 
     source_home = Path(args.source).expanduser().resolve()
     output_home = Path(args.output).expanduser().resolve()
-    if output_home == source_home or source_home in output_home.parents and output_home.name == ".vibebar":
+    if output_home == source_home or source_home in output_home.parents and output_home.name == ".code-cli-bar":
         fail("output must not be the source home")
-    if not (source_home / ".vibebar").is_dir():
-        fail(f"no .vibebar store under {source_home}")
+    if not (source_home / ".code-cli-bar").is_dir():
+        fail(f"no .code-cli-bar store under {source_home}")
     if output_home.exists() and not args.keep:
         # Only a tree this script built carries the marker. Anything else —
         # an alternate home that happens to have a .vibebar/, a directory

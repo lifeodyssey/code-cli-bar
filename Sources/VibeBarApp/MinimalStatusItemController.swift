@@ -28,6 +28,20 @@ final class MinimalStatusItemController: NSObject, NSPopoverDelegate {
         NSStatusBar.system.removeStatusItem(statusItem)
     }
 
+    /// Opens the production compact popover against a synthetic demo home.
+    /// No refresh runs here: demo mode loads only the scrubbed caches prepared
+    /// by `Scripts/demo_home.py` and never reaches a provider or Keychain.
+    func presentPopoverForDemo(anchor: (view: NSView, rect: NSRect)? = nil) {
+        guard DemoMode.isEnabled else { return }
+        environment.setPopoverVisible(true)
+        if let anchor {
+            popover.show(relativeTo: anchor.rect, of: anchor.view, preferredEdge: .minY)
+        } else if let button = statusItem.button {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+        popover.contentViewController?.view.window?.makeKey()
+    }
+
     private func configurePopover() {
         popover.behavior = .transient
         popover.animates = true

@@ -258,6 +258,28 @@ public final class QuotaService: ObservableObject {
         return quota
     }
 
+    /// Returns only buckets that are still inside the provider-declared
+    /// quota cycle from a stale last-success snapshot. This is deliberately
+    /// separate from `currentCachedQuota`: callers must label it as last-known
+    /// data and must never treat it as a successful refresh. It lets the UI
+    /// retain useful weekly reset/usage information during a credential or
+    /// network outage without resurrecting an expired cycle or a corrupt
+    /// future-dated cache.
+    public func lastKnownCurrentCycleQuota(
+        for accountId: String,
+        now: Date = Date()
+    ) -> AccountQuota? {
+        guard var quota = lastSuccessByAccount[accountId],
+              quota.queriedAt <= now.addingTimeInterval(
+                  QuotaFreshnessPolicy.allowedClockSkew
+              )
+        else { return nil }
+        quota.buckets = quota.buckets.filter { bucket in
+            bucket.resetAt.map { $0 > now } == true
+        }
+        return quota.buckets.isEmpty ? nil : quota
+    }
+
     /// Opening a provider page should refresh both missing and stale cache.
     /// Previously any cache entry — even one from months ago — suppressed the
     /// page refresh indefinitely.
