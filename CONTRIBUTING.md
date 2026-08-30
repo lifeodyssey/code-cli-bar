@@ -1,6 +1,6 @@
-# Contributing to Vibe Bar
+# Contributing to Code CLI Bar
 
-Thanks for helping improve Vibe Bar. The project is a native macOS menu-bar app
+Thanks for helping improve Code CLI Bar. The project is a native macOS menu-bar app
 for developers who monitor AI subscription quotas and local usage across
 ChatGPT/Codex, Claude Code, Gemini/AntiGravity, Grok, and other coding plans.
 Changes should keep those workflows clear, private, fast, and visually
@@ -63,10 +63,10 @@ Before opening a pull request, run:
 swift build
 swift test
 ./Scripts/build_app.sh release
-codesign -d --entitlements - ".build/Vibe Bar.app"
+codesign -d --entitlements - ".build/Code CLI Bar.app"
 ```
 
-Vibe Bar runs **unsandboxed** so the misc-providers feature can read
+Code CLI Bar runs **unsandboxed** so the misc-providers feature can read
 browser cookies and probe AntiGravity. The codesign output should be
 an empty `<dict/>` plist with no `com.apple.security.app-sandbox` key.
 See `AGENTS.md` § 6 for the full reasoning.

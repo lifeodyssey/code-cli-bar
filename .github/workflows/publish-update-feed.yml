@@ -24,19 +24,34 @@ jobs:
       TRIGGER_TAG: ${{ github.event.release.tag_name }}
 
     steps:
+      - name: Check whether Sparkle publishing is configured
+        id: sparkle
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          if [[ -z "$SPARKLE_ED_PRIVATE_KEY" ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Sparkle feed publishing is disabled until SPARKLE_ED_PRIVATE_KEY is configured."
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check out feed publisher
+        if: steps.sparkle.outputs.enabled == 'true'
         uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
 
       - name: Resolve newest published Main and Dev releases
+        if: steps.sparkle.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          feed_dir="$RUNNER_TEMP/vibebar-update-feed"
+          feed_dir="$RUNNER_TEMP/code-cli-bar-update-feed"
           mkdir -p "$feed_dir"
           releases_json="$feed_dir/releases.json"
           manifest="$feed_dir/releases.tsv"
@@ -85,10 +100,11 @@ jobs:
               "$channel" "$tag" "${archives[0]}" >> "$manifest"
           done
 
-          echo "FEED_DIR=$feed_dir" >> "$GITHUB_ENV"
+          echo "CODE_CLI_BAR_FEED_DIR=$feed_dir" >> "$GITHUB_ENV"
           echo "RELEASE_MANIFEST=$manifest" >> "$GITHUB_ENV"
 
       - name: Reconstruct shared appcast
+        if: steps.sparkle.outputs.enabled == 'true'
         env:
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         shell: bash
@@ -103,7 +119,7 @@ jobs:
           iteration=0
           while IFS=$'\t' read -r channel tag archive; do
             ((iteration += 1))
-            next_appcast="$FEED_DIR/appcast-$iteration.xml"
+            next_appcast="$CODE_CLI_BAR_FEED_DIR/appcast-$iteration.xml"
             args=(
               --channel "$channel"
               --tag "$tag"
@@ -121,10 +137,11 @@ jobs:
             echo "Shared appcast reconstruction produced no output." >&2
             exit 1
           fi
-          cp "$current_appcast" "$FEED_DIR/appcast.xml"
-          echo "RELEASE_APPCAST=$FEED_DIR/appcast.xml" >> "$GITHUB_ENV"
+          cp "$current_appcast" "$CODE_CLI_BAR_FEED_DIR/appcast.xml"
+          echo "RELEASE_APPCAST=$CODE_CLI_BAR_FEED_DIR/appcast.xml" >> "$GITHUB_ENV"
 
       - name: Publish machine-managed updates branch
+        if: steps.sparkle.outputs.enabled == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -146,7 +163,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add appcast.xml
-          git commit \
-            -m "Rebuild Sparkle feed after $TRIGGER_TAG" \
-            -m "Co-Authored-By: Codex <noreply@openai.com>"
+          git commit -m "Rebuild Sparkle feed after $TRIGGER_TAG"
           git push origin HEAD:updates

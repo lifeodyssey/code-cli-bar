@@ -4,12 +4,13 @@
 # Output: .build/Code CLI Bar.app
 #
 # Signing defaults to ad-hoc for local builds. Public release automation can
-# set VIBEBAR_CODESIGN_IDENTITY to a Developer ID Application identity; the
-# same unsandboxed entitlements remain in force in both modes.
+# set CODE_CLI_BAR_CODESIGN_IDENTITY to a Developer ID Application identity;
+# VIBEBAR_CODESIGN_IDENTITY remains a compatibility fallback for existing
+# maintainer setups. The same unsandboxed entitlements remain in force.
 set -euo pipefail
 
 CONFIG="${1:-release}"
-SIGN_IDENTITY="${VIBEBAR_CODESIGN_IDENTITY:--}"
+SIGN_IDENTITY="${CODE_CLI_BAR_CODESIGN_IDENTITY:-${VIBEBAR_CODESIGN_IDENTITY:--}}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 

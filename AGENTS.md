@@ -1341,7 +1341,7 @@ moment step 1 lands.
 
 - Follow [RELEASING.md](RELEASING.md) for the complete tag, asset, signing,
   notarization, and draft-publishing flow.
-- Bundle ID is `com.astroqore.VibeBar`. Bump
+- Bundle ID is `com.lifeodyssey.CodeCLIBar`. Bump
   `CFBundleShortVersionString` and `CFBundleVersion` in
   `Resources/Info.plist` for a new release.
 - Confirm `Resources/VibeBar.entitlements` still matches the rule in
@@ -1351,16 +1351,15 @@ moment step 1 lands.
 - Main tags are exactly `v` plus `CFBundleShortVersionString`. Dev tags are
   `v<CFBundleShortVersionString>-dev.<CFBundleVersion>`. The workflow creates
   a draft GitHub Release so its assets can be inspected before publishing.
-- Every published release must include the ZIP, checksum, and signed
-  `appcast.xml`. The workflow requires the repository Actions secret
-  `SPARKLE_ED_PRIVATE_KEY`, exposes it only to the release-asset build step,
-  and passes it to Sparkle over standard input. The matching public key is
-  `SUPublicEDKey` in `Resources/Info.plist`.
+- Every published release must include the ZIP and checksum. A signed
+  `appcast.xml` is required only after Sparkle updates are enabled. That path
+  requires the Actions secret `SPARKLE_ED_PRIVATE_KEY`, the matching
+  `SUPublicEDKey`, and `SUFeedURL` in `Resources/Info.plist`.
 - Main is Sparkle's default channel; Dev adds the `dev` channel and still
   receives Main releases. Published release appcasts are promoted by
   `publish-update-feed.yml`, which regenerates against the latest feed before
   writing the machine-managed `updates` branch at
-  `https://raw.githubusercontent.com/AstroQore/vibe-bar/updates/appcast.xml`.
+  `https://raw.githubusercontent.com/lifeodyssey/code-cli-bar/updates/appcast.xml`.
   Never hand-edit that shared appcast.
 - The license is AGPL-3.0-only; don't relicense without an explicit
   board decision.
@@ -1373,7 +1372,7 @@ moment step 1 lands.
 
 - The license. AGPL-3.0-only is a board decision, not a code style
   choice.
-- The bundle ID `com.astroqore.VibeBar`.
+- The bundle ID `com.lifeodyssey.CodeCLIBar`.
 - The sandbox state in `Resources/VibeBar.entitlements`. The plist is
   intentionally empty (see § 6) so the misc-providers feature can read
   browser cookies and probe AntiGravity. Don't re-add

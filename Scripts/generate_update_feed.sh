@@ -8,7 +8,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SPARKLE_KEY_ACCOUNT="${VIBEBAR_SPARKLE_KEY_ACCOUNT:-astroqore-vibe-bar}"
+SPARKLE_KEY_ACCOUNT="${CODE_CLI_BAR_SPARKLE_KEY_ACCOUNT:-${VIBEBAR_SPARKLE_KEY_ACCOUNT:-lifeodyssey-code-cli-bar}}"
+REPOSITORY="${CODE_CLI_BAR_GITHUB_REPOSITORY:-${GITHUB_REPOSITORY:-lifeodyssey/code-cli-bar}}"
 RELEASE_CHANNEL=""
 RELEASE_TAG=""
 ARCHIVE=""
@@ -107,7 +108,7 @@ if [[ -z "$GENERATE_APPCAST" || ! -x "$GENERATE_APPCAST" ]]; then
     exit 1
 fi
 
-STAGING_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vibebar-update-feed.XXXXXX")"
+STAGING_DIR="$(mktemp -d "${TMPDIR:-/tmp}/code-cli-bar-update-feed.XXXXXX")"
 trap 'rm -rf "$STAGING_DIR"' EXIT
 STAGED_ARCHIVE="$STAGING_DIR/$(basename "$ARCHIVE")"
 cp "$ARCHIVE" "$STAGED_ARCHIVE"
@@ -145,12 +146,12 @@ if [[ -n "$BASE_APPCAST" ]]; then
 fi
 
 RELEASE_NOTES="$STAGING_DIR/$(basename "${STAGED_ARCHIVE%.zip}").md"
-printf '# Vibe Bar %s (%s)\n\nSee the [full release notes](https://github.com/AstroQore/vibe-bar/releases/tag/%s).\n' \
-    "$VERSION" "$RELEASE_CHANNEL" "$RELEASE_TAG" > "$RELEASE_NOTES"
+printf '# Code CLI Bar %s (%s)\n\nSee the [full release notes](https://github.com/%s/releases/tag/%s).\n' \
+    "$VERSION" "$RELEASE_CHANNEL" "$REPOSITORY" "$RELEASE_TAG" > "$RELEASE_NOTES"
 
 APPCAST_ARGS=(
-    --download-url-prefix "https://github.com/AstroQore/vibe-bar/releases/download/$RELEASE_TAG/"
-    --link "https://github.com/AstroQore/vibe-bar/releases/tag/$RELEASE_TAG"
+    --download-url-prefix "https://github.com/$REPOSITORY/releases/download/$RELEASE_TAG/"
+    --link "https://github.com/$REPOSITORY/releases/tag/$RELEASE_TAG"
     --embed-release-notes
     --maximum-versions 0
     -o "$STAGING_DIR/appcast.xml"
