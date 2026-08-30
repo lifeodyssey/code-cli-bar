@@ -21,36 +21,49 @@ public struct GrokQuotaAdapter: QuotaAdapter {
     public let tool: ToolType = .grok
 
     private let session: URLSession
-    private let homeDirectory: String
     private let now: @Sendable () -> Date
+    private let credentialResolver: @Sendable () throws -> GrokCredentials
+    private let cookieHeaderResolver: @Sendable () throws -> String
 
     public init(
         session: URLSession = .shared,
         homeDirectory: String = RealHomeDirectory.path,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        credentialResolver: (@Sendable () throws -> GrokCredentials)? = nil,
+        cookieHeaderResolver: (@Sendable () throws -> String)? = nil
     ) {
         self.session = session
-        self.homeDirectory = homeDirectory
         self.now = now
+        self.credentialResolver = credentialResolver ?? {
+            try GrokCredentialsStore.load(homeDirectory: homeDirectory)
+        }
+        self.cookieHeaderResolver = cookieHeaderResolver ?? {
+            try GrokWebCookieStore.readCookieHeader()
+        }
     }
 
     public func fetch(for account: AccountIdentity) async throws -> AccountQuota {
-        let credentials = (try? GrokCredentialsStore.load(homeDirectory: homeDirectory)).flatMap { creds in
-            creds.isExpired ? nil : creds
-        }
-
-        if let credentials {
+        var nativeError: QuotaError?
+        do {
+            let credentials = try credentialResolver()
+            guard !credentials.isExpired(at: now()) else {
+                throw QuotaError.needsLogin
+            }
             return try await fetchWithBearer(credentials: credentials, account: account)
+        } catch let error as QuotaError {
+            nativeError = error
+        } catch {
+            nativeError = .noCredential
         }
 
-        if let header = try? GrokWebCookieStore.readCookieHeader() {
+        if let header = try? cookieHeaderResolver() {
             return try await fetchWithCookies(header: header, account: account)
         }
 
         // Neither source available. Prefer the auth.json error message
         // because it's actionable (`grok login` is the canonical
         // documented path) and tells the user exactly what to do.
-        throw QuotaError.noCredential
+        throw nativeError ?? QuotaError.noCredential
     }
 
     private func fetchWithBearer(

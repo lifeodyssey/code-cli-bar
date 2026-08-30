@@ -19,7 +19,7 @@ final class PricingResolverTests: XCTestCase {
     }
 
     private func writeCache(to home: URL, dataSet: PricingDataSet) throws {
-        let cacheDir = home.appendingPathComponent(".vibebar", isDirectory: true)
+        let cacheDir = home.appendingPathComponent(VibeBarLocalStore.directoryName, isDirectory: true)
         try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
         let cacheFile = cacheDir.appendingPathComponent("pricing_cache.json")
         let data = try JSONEncoder().encode(dataSet)
@@ -65,7 +65,7 @@ final class PricingResolverTests: XCTestCase {
     func testCorruptCacheFallsBackToBundle() throws {
         let home = try makeTempHome()
         defer { cleanup(home) }
-        let cacheDir = home.appendingPathComponent(".vibebar", isDirectory: true)
+        let cacheDir = home.appendingPathComponent(VibeBarLocalStore.directoryName, isDirectory: true)
         try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
         try Data("not json".utf8).write(to: cacheDir.appendingPathComponent("pricing_cache.json"))
 

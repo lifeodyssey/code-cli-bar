@@ -59,7 +59,12 @@ let package = Package(
                 // a runtime cache under ~/.vibebar/pricing_cache.json
                 // can override it when `PricingRefresher` fetches a
                 // newer copy from the project's GitHub raw URL.
-                .copy("Resources/pricing.json")
+                .copy("Resources/pricing.json"),
+                // dsh stores its append-only JSONL history as a concatenation
+                // of independent Zstandard frames. The app runs this helper
+                // with the Node executable already installed alongside dsh
+                // when a standalone `zstd` command is unavailable.
+                .copy("Resources/dsh-zstd-decode.mjs")
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),

@@ -5,7 +5,7 @@ import os.log
 /// (access tokens, raw credentials, Authorization headers, refresh tokens) ever
 /// passes through. Always call with already-redacted values.
 public enum SafeLog {
-    public static let subsystem = "com.astroqore.VibeBar"
+    public static let subsystem = "com.lifeodyssey.CodeCLIBar"
 
     private static let general = Logger(subsystem: subsystem, category: "general")
     private static let network = Logger(subsystem: subsystem, category: "network")

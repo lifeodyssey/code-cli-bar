@@ -32,6 +32,10 @@ public struct CostUsageScanCache: Codable, Sendable {
         public let output: Int
         public let cache: Int
         public let cacheCreation: Int?
+        /// Provider-reported request cost when the local store records it.
+        /// OpenCode writes this value next to token counters, so retaining it
+        /// avoids recomputing a historical request against today's prices.
+        public let reportedCostUSD: Double?
         public let sessionId: String?
         public let messageId: String?
         public let requestId: String?
@@ -64,6 +68,7 @@ public struct CostUsageScanCache: Codable, Sendable {
             output: Int,
             cache: Int,
             cacheCreation: Int? = nil,
+            reportedCostUSD: Double? = nil,
             sessionId: String? = nil,
             messageId: String? = nil,
             requestId: String? = nil,
@@ -81,6 +86,7 @@ public struct CostUsageScanCache: Codable, Sendable {
             self.output = output
             self.cache = cache
             self.cacheCreation = cacheCreation
+            self.reportedCostUSD = reportedCostUSD
             self.sessionId = sessionId
             self.messageId = messageId
             self.requestId = requestId
@@ -90,6 +96,47 @@ public struct CostUsageScanCache: Codable, Sendable {
             self.serviceTier = serviceTier
             self.harness = harness
             self.projectPath = projectPath
+        }
+
+        /// The compact product persists only the fields required for usage
+        /// accounting and stable deduplication. Identifiers become opaque,
+        /// deterministic digests and project paths are discarded entirely.
+        /// Parsing and in-memory duplicate resolution may still use the raw
+        /// values before this boundary.
+        func privacySafePersistentCopy() -> Self {
+            Self(
+                date: date,
+                model: model,
+                modelFallback: modelFallback,
+                input: input,
+                output: output,
+                cache: cache,
+                cacheCreation: cacheCreation,
+                reportedCostUSD: reportedCostUSD,
+                sessionId: Self.opaque(sessionId, prefix: "session-v1"),
+                messageId: Self.opaque(messageId, prefix: "message-v1"),
+                requestId: Self.opaque(requestId, prefix: "request-v1"),
+                isSidechain: isSidechain,
+                pathRole: pathRole,
+                sourceKey: Self.opaque(sourceKey, prefix: "source-v1"),
+                serviceTier: serviceTier,
+                harness: harness,
+                projectPath: nil
+            )
+        }
+
+        static func opaque(_ value: String?, prefix: String) -> String? {
+            guard let value, !value.isEmpty else { return nil }
+            if isOpaqueDigest(value) { return value }
+            return PrivacyPreservingHash.fileComponent(prefix: prefix, rawValue: value)
+        }
+
+        private static func isOpaqueDigest(_ value: String) -> Bool {
+            guard let separator = value.lastIndex(of: "-") else { return false }
+            let digest = value[value.index(after: separator)...]
+            return digest.count == 64 && digest.allSatisfy { character in
+                character.isNumber || ("a"..."f").contains(character)
+            }
         }
     }
 
@@ -161,7 +208,11 @@ public struct CostUsageScanCache: Codable, Sendable {
     }
 
     public mutating func store(_ events: [ParsedEvent], for path: String, mtime: Date, size: Int64) {
-        entries[entryKey(for: path)] = FileEntry(mtime: mtime, size: size, events: events)
+        entries[entryKey(for: path)] = FileEntry(
+            mtime: mtime,
+            size: size,
+            events: events.map { $0.privacySafePersistentCopy() }
+        )
     }
 
     public mutating func prune(known: Set<String>) {
@@ -202,10 +253,10 @@ public struct CostUsageScanCache: Codable, Sendable {
     /// path replays them without re-reading `originator`, so the ledger's
     /// `harness_v2` fixup would be undone on the next scan unless the cache
     /// is invalidated with it.
-    /// v7 adds `ParsedEvent.projectPath`. Codex and Claude both stamp their
-    /// cwd in the transcript, but a warm v6 cache never re-opens that header;
-    /// invalidate once so the project dashboard is populated immediately.
-    public static let currentSchemaVersion = 7
+    /// v7 added `ParsedEvent.projectPath` for the upstream dashboard.
+    /// v8 is the Code CLI Bar privacy boundary: raw request/session ids and
+    /// project paths are no longer allowed in the persisted scan cache.
+    public static let currentSchemaVersion = 9
 
     public static func fileURL(homeDirectory: String, tool: ToolType) -> URL {
         URL(fileURLWithPath: homeDirectory)

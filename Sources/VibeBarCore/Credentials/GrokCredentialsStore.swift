@@ -38,8 +38,12 @@ public struct GrokCredentials: Sendable, Equatable {
     }
 
     public var isExpired: Bool {
+        isExpired(at: Date())
+    }
+
+    public func isExpired(at date: Date) -> Bool {
         guard let expiresAt else { return false }
-        return Date() >= expiresAt
+        return date >= expiresAt
     }
 
     /// Friendly plan label. SuperGrok is the only tier today; legacy

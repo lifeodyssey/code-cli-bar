@@ -3,6 +3,48 @@ import XCTest
 
 @MainActor
 final class QuotaRefreshSchedulerTests: XCTestCase {
+    func testStartCanRefreshMissingQuotaImmediately() async {
+        let account = AccountIdentity(id: "launch-zcode", tool: .zai, source: .cliDetected)
+        let adapter = CountingQuotaAdapter(tool: .zai)
+        let service = QuotaService(adapters: [.zai: adapter], mockProvider: { false })
+        let scheduler = QuotaRefreshScheduler(
+            service: service,
+            accountsProvider: { [account] },
+            intervalProvider: { 600 }
+        )
+
+        scheduler.start(refreshStaleImmediately: true)
+        defer { scheduler.stop() }
+        for _ in 0..<200 {
+            if adapter.fetchCount == 1 { break }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+
+        XCTAssertEqual(adapter.fetchCount, 1)
+    }
+
+    func testStartTreatsFreshEmptyQuotaAsMissing() async {
+        let account = AccountIdentity(id: "launch-empty-zcode", tool: .zai, source: .cliDetected)
+        let adapter = CountingQuotaAdapter(tool: .zai)
+        let service = QuotaService(adapters: [.zai: adapter], mockProvider: { false })
+        _ = await service.refresh(account)
+        XCTAssertEqual(adapter.fetchCount, 1)
+
+        let scheduler = QuotaRefreshScheduler(
+            service: service,
+            accountsProvider: { [account] },
+            intervalProvider: { 600 }
+        )
+        scheduler.start(refreshStaleImmediately: true)
+        defer { scheduler.stop() }
+        for _ in 0..<200 {
+            if adapter.fetchCount == 2 { break }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+
+        XCTAssertEqual(adapter.fetchCount, 2)
+    }
+
     func testTriggerRefreshRunsSupplementalRefreshEvenWithoutAccounts() {
         var supplementalRefreshCount = 0
         let service = QuotaService(adapters: [:], mockProvider: { false })
@@ -179,11 +221,11 @@ final class QuotaRefreshSchedulerTests: XCTestCase {
 
         XCTAssertTrue(scheduler.triggerRefreshForStaleCacheIfNeeded(now: now))
         XCTAssertFalse(scheduler.triggerRefreshForStaleCacheIfNeeded(now: now))
-        for _ in 0..<20 {
+        for _ in 0..<200 {
             if service.cachedQuota(for: account.id)?.buckets.first?.resetAt == refreshed.resetAt {
                 break
             }
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(1))
         }
         XCTAssertEqual(
             service.cachedQuota(for: account.id)?.buckets.first?.resetAt,
@@ -233,9 +275,9 @@ final class QuotaRefreshSchedulerTests: XCTestCase {
         XCTAssertTrue(scheduler.triggerRefreshForStaleCacheIfNeeded(now: now))
         accounts = [stale, other]
         scheduler.triggerRefresh()
-        for _ in 0..<40 {
+        for _ in 0..<200 {
             if service.cachedQuota(for: other.id) != nil { break }
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(1))
         }
         XCTAssertNotNil(service.cachedQuota(for: other.id))
     }
@@ -261,9 +303,9 @@ final class QuotaRefreshSchedulerTests: XCTestCase {
         // Nothing has ever been fetched, so both accounts are stale.
         XCTAssertFalse(scheduler.triggerRefreshForStaleCacheIfNeeded(tools: []))
         XCTAssertTrue(scheduler.triggerRefreshForStaleCacheIfNeeded(tools: [.claude]))
-        for _ in 0..<40 {
+        for _ in 0..<200 {
             if claudeAdapter.fetchCount == 1 { break }
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(1))
         }
 
         XCTAssertEqual(claudeAdapter.fetchCount, 1)
@@ -294,9 +336,9 @@ final class QuotaRefreshSchedulerTests: XCTestCase {
 
         scheduler.triggerBoundaryRefresh(accountIds: [first.id])
         await gate.release()
-        for _ in 0..<40 {
+        for _ in 0..<200 {
             if counter.fetchCount == 2 { break }
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(1))
         }
 
         XCTAssertEqual(counter.fetchCount, 2)

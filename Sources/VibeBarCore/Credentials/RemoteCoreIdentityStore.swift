@@ -14,7 +14,7 @@ public struct RemoteCoreIdentity: Sendable {
 }
 
 public enum RemoteCoreIdentityStore {
-    private static let service = "com.astroqore.VibeBar.remote-sync"
+    private static let service = "com.lifeodyssey.CodeCLIBar.remote-sync"
     private static let identityAccount = "core-identity-v1"
     private static let pendingEnrollmentAccount = "pending-enrollment-v1"
 

@@ -63,6 +63,33 @@ final class QuotaFreshnessLabelTests: XCTestCase {
         ))
     }
 
+    func testFreshnessPolicyRejectsOldDataEvenWhenItsQuotaResetCouldStillBeFuture() {
+        XCTAssertFalse(QuotaFreshnessPolicy.isFresh(
+            timestamp: now.addingTimeInterval(-3 * 86_400),
+            maxAge: 1_200,
+            now: now
+        ))
+    }
+
+    func testFreshnessPolicyRejectsImplausiblyFutureTimestamps() {
+        XCTAssertFalse(QuotaFreshnessPolicy.isFresh(
+            timestamp: now.addingTimeInterval(10 * 60),
+            maxAge: 1_200,
+            now: now
+        ))
+
+        XCTAssertEqual(
+            QuotaFreshnessLabel.describe(
+                lastSuccessAt: now.addingTimeInterval(10 * 60),
+                lastAttemptAt: now,
+                errorMessage: nil,
+                staleAfter: 1_200,
+                now: now
+            )?.label,
+            "Stale · invalid update time"
+        )
+    }
+
     func testAccountThatNeverRefreshedProducesNoWarning() {
         XCTAssertNil(QuotaFreshnessLabel.describe(
             lastSuccessAt: nil,

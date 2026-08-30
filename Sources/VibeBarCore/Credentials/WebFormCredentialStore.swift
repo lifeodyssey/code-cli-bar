@@ -20,7 +20,7 @@ import Foundation
 /// Records dedupe on `(host, username)` — re-saving the same login
 /// updates the password and bumps `savedAt` instead of duplicating.
 public enum WebFormCredentialStore {
-    public static let keychainService = "com.astroqore.VibeBar.web-form-passwords"
+    public static let keychainService = "com.lifeodyssey.CodeCLIBar.web-form-passwords"
     private static let accountSuffix = ".formCredentials"
 
     public static func keychainAccount(tool: ToolType) -> String {

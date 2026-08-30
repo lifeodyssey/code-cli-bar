@@ -27,6 +27,15 @@ public struct CostSnapshot: Sendable, Equatable, Codable {
     public let last30DaysRequests: Int
     public let allTimeRequests: Int
 
+    /// Requests whose token counters were readable but whose model had no
+    /// trustworthy price. These are kept separate from genuinely free usage
+    /// so every cost total can be presented as a known subtotal, not a false
+    /// zero.
+    public let todayUnpricedRequests: Int
+    public let last7DaysUnpricedRequests: Int
+    public let last30DaysUnpricedRequests: Int
+    public let allTimeUnpricedRequests: Int
+
     /// Per-day series since `dayHistoryStart`, ordered ascending.
     public let dailyHistory: [DailyCostPoint]
     /// Per-hour series for the current local day, ordered ascending. This is
@@ -99,6 +108,10 @@ public struct CostSnapshot: Sendable, Equatable, Codable {
         last7DaysRequests: Int = 0,
         last30DaysRequests: Int = 0,
         allTimeRequests: Int = 0,
+        todayUnpricedRequests: Int = 0,
+        last7DaysUnpricedRequests: Int = 0,
+        last30DaysUnpricedRequests: Int = 0,
+        allTimeUnpricedRequests: Int = 0,
         dailyHistory: [DailyCostPoint],
         todayHourlyHistory: [HourlyCostPoint] = [],
         yesterdayHourlyHistory: [HourlyCostPoint] = [],
@@ -125,6 +138,10 @@ public struct CostSnapshot: Sendable, Equatable, Codable {
         self.last7DaysRequests = last7DaysRequests
         self.last30DaysRequests = last30DaysRequests
         self.allTimeRequests = allTimeRequests
+        self.todayUnpricedRequests = todayUnpricedRequests
+        self.last7DaysUnpricedRequests = last7DaysUnpricedRequests
+        self.last30DaysUnpricedRequests = last30DaysUnpricedRequests
+        self.allTimeUnpricedRequests = allTimeUnpricedRequests
         self.dailyHistory = dailyHistory
         self.todayHourlyHistory = todayHourlyHistory
         self.yesterdayHourlyHistory = yesterdayHourlyHistory
@@ -162,27 +179,40 @@ public struct CostSnapshot: Sendable, Equatable, Codable {
         var weekCost = 0.0, weekTokenCount = 0
         var monthCost = 0.0, monthTokenCount = 0
         var allCost = 0.0, allTokenCount = 0
+        var todayRequestCount = 0, todayUnpricedCount = 0
+        var weekRequestCount = 0, weekUnpricedCount = 0
+        var monthRequestCount = 0, monthUnpricedCount = 0
+        var allRequestCount = 0, allUnpricedCount = 0
 
         for point in dailyHistory {
             let day = calendar.startOfDay(for: point.date)
             guard day <= today else { continue }
             allCost += point.costUSD
             allTokenCount += point.totalTokens
+            allRequestCount += point.requests
+            allUnpricedCount += point.unpricedRequests
             if calendar.isDate(day, inSameDayAs: now) {
                 todayCost += point.costUSD
                 todayTokenCount += point.totalTokens
+                todayRequestCount += point.requests
+                todayUnpricedCount += point.unpricedRequests
             }
             if day >= weekCutoff {
                 weekCost += point.costUSD
                 weekTokenCount += point.totalTokens
+                weekRequestCount += point.requests
+                weekUnpricedCount += point.unpricedRequests
             }
             if day >= monthCutoff {
                 monthCost += point.costUSD
                 monthTokenCount += point.totalTokens
+                monthRequestCount += point.requests
+                monthUnpricedCount += point.unpricedRequests
             }
         }
 
         let hasDailyHistory = !dailyHistory.isEmpty
+        let hasDailyRequestHistory = dailyHistory.contains { $0.requests > 0 }
         let hourlyToday = todayHourlyHistory.filter {
             calendar.isDate($0.date, inSameDayAs: now)
         }
@@ -201,10 +231,6 @@ public struct CostSnapshot: Sendable, Equatable, Codable {
         }
         let coverageStart = hourlyCoverageStart.map { max($0, hourlyWindowStart) }
 
-        // Request counts have no daily history — they pass through
-        // verbatim except for the today bucket, which we zero out
-        // when the cached snapshot's `updatedAt` is from a previous
-        // day (otherwise yesterday's TPM/RPM bleed into "today").
         let todayIsFresh = calendar.isDate(updatedAt, inSameDayAs: now)
         return CostSnapshot(
             tool: tool,
@@ -216,10 +242,14 @@ public struct CostSnapshot: Sendable, Equatable, Codable {
             last7DaysTokens: hasDailyHistory ? weekTokenCount : last7DaysTokens,
             last30DaysTokens: hasDailyHistory ? monthTokenCount : last30DaysTokens,
             allTimeTokens: hasDailyHistory ? allTokenCount : allTimeTokens,
-            todayRequests: todayIsFresh ? todayRequests : 0,
-            last7DaysRequests: last7DaysRequests,
-            last30DaysRequests: last30DaysRequests,
-            allTimeRequests: allTimeRequests,
+            todayRequests: hasDailyRequestHistory ? todayRequestCount : (todayIsFresh ? todayRequests : 0),
+            last7DaysRequests: hasDailyRequestHistory ? weekRequestCount : last7DaysRequests,
+            last30DaysRequests: hasDailyRequestHistory ? monthRequestCount : last30DaysRequests,
+            allTimeRequests: hasDailyRequestHistory ? allRequestCount : allTimeRequests,
+            todayUnpricedRequests: hasDailyRequestHistory ? todayUnpricedCount : (todayIsFresh ? todayUnpricedRequests : 0),
+            last7DaysUnpricedRequests: hasDailyRequestHistory ? weekUnpricedCount : last7DaysUnpricedRequests,
+            last30DaysUnpricedRequests: hasDailyRequestHistory ? monthUnpricedCount : last30DaysUnpricedRequests,
+            allTimeUnpricedRequests: hasDailyRequestHistory ? allUnpricedCount : allTimeUnpricedRequests,
             dailyHistory: dailyHistory,
             todayHourlyHistory: hourlyToday,
             yesterdayHourlyHistory: hourlyYesterday,
@@ -260,6 +290,7 @@ public struct CostSnapshot: Sendable, Equatable, Codable {
         case tool, todayCostUSD, last7DaysCostUSD, last30DaysCostUSD, allTimeCostUSD
         case todayTokens, last7DaysTokens, last30DaysTokens, allTimeTokens
         case todayRequests, last7DaysRequests, last30DaysRequests, allTimeRequests
+        case todayUnpricedRequests, last7DaysUnpricedRequests, last30DaysUnpricedRequests, allTimeUnpricedRequests
         case dailyHistory, todayHourlyHistory, yesterdayHourlyHistory, heatmap, modelBreakdowns, last7DaysModelBreakdowns
         case recentHourlyHistory, hourlyCoverageStart
         case dailyModelBreakdown, hourlyModelBreakdown
@@ -290,6 +321,10 @@ public struct CostSnapshot: Sendable, Equatable, Codable {
         self.last7DaysRequests = try c.decodeIfPresent(Int.self, forKey: .last7DaysRequests) ?? 0
         self.last30DaysRequests = try c.decodeIfPresent(Int.self, forKey: .last30DaysRequests) ?? 0
         self.allTimeRequests = try c.decodeIfPresent(Int.self, forKey: .allTimeRequests) ?? 0
+        self.todayUnpricedRequests = try c.decodeIfPresent(Int.self, forKey: .todayUnpricedRequests) ?? 0
+        self.last7DaysUnpricedRequests = try c.decodeIfPresent(Int.self, forKey: .last7DaysUnpricedRequests) ?? 0
+        self.last30DaysUnpricedRequests = try c.decodeIfPresent(Int.self, forKey: .last30DaysUnpricedRequests) ?? 0
+        self.allTimeUnpricedRequests = try c.decodeIfPresent(Int.self, forKey: .allTimeUnpricedRequests) ?? 0
         self.dailyHistory = try c.decode([DailyCostPoint].self, forKey: .dailyHistory)
         self.todayHourlyHistory = try c.decodeIfPresent([HourlyCostPoint].self, forKey: .todayHourlyHistory) ?? []
         self.yesterdayHourlyHistory = try c.decodeIfPresent([HourlyCostPoint].self, forKey: .yesterdayHourlyHistory) ?? []
@@ -346,6 +381,10 @@ public struct CostSnapshot: Sendable, Equatable, Codable {
         try c.encode(last7DaysRequests, forKey: .last7DaysRequests)
         try c.encode(last30DaysRequests, forKey: .last30DaysRequests)
         try c.encode(allTimeRequests, forKey: .allTimeRequests)
+        try c.encode(todayUnpricedRequests, forKey: .todayUnpricedRequests)
+        try c.encode(last7DaysUnpricedRequests, forKey: .last7DaysUnpricedRequests)
+        try c.encode(last30DaysUnpricedRequests, forKey: .last30DaysUnpricedRequests)
+        try c.encode(allTimeUnpricedRequests, forKey: .allTimeUnpricedRequests)
         try c.encode(dailyHistory, forKey: .dailyHistory)
         try c.encode(todayHourlyHistory, forKey: .todayHourlyHistory)
         try c.encode(yesterdayHourlyHistory, forKey: .yesterdayHourlyHistory)
@@ -396,16 +435,29 @@ public enum CostSnapshotAggregator {
         _ snapshots: [CostSnapshot],
         calendar: Calendar = .current
     ) -> [DailyCostPoint] {
-        var totals: [Date: (cost: Double, tokens: Int)] = [:]
+        var totals: [Date: (cost: Double, tokens: Int, requests: Int, unpriced: Int)] = [:]
         for snapshot in snapshots {
             for point in snapshot.dailyHistory {
                 let day = calendar.startOfDay(for: point.date)
-                let current = totals[day] ?? (0, 0)
-                totals[day] = (current.cost + point.costUSD, current.tokens + point.totalTokens)
+                let current = totals[day] ?? (0, 0, 0, 0)
+                totals[day] = (
+                    current.cost + point.costUSD,
+                    current.tokens + point.totalTokens,
+                    current.requests + point.requests,
+                    current.unpriced + point.unpricedRequests
+                )
             }
         }
         return totals
-            .map { DailyCostPoint(date: $0.key, costUSD: $0.value.cost, totalTokens: $0.value.tokens) }
+            .map {
+                DailyCostPoint(
+                    date: $0.key,
+                    costUSD: $0.value.cost,
+                    totalTokens: $0.value.tokens,
+                    requests: $0.value.requests,
+                    unpricedRequests: $0.value.unpriced
+                )
+            }
             .sorted { $0.date < $1.date }
     }
 
@@ -571,6 +623,10 @@ public enum CostSnapshotAggregator {
             last7DaysRequests: rebased.reduce(0) { $0 + $1.last7DaysRequests },
             last30DaysRequests: rebased.reduce(0) { $0 + $1.last30DaysRequests },
             allTimeRequests: rebased.reduce(0) { $0 + $1.allTimeRequests },
+            todayUnpricedRequests: rebased.reduce(0) { $0 + $1.todayUnpricedRequests },
+            last7DaysUnpricedRequests: rebased.reduce(0) { $0 + $1.last7DaysUnpricedRequests },
+            last30DaysUnpricedRequests: rebased.reduce(0) { $0 + $1.last30DaysUnpricedRequests },
+            allTimeUnpricedRequests: rebased.reduce(0) { $0 + $1.allTimeUnpricedRequests },
             dailyHistory: combinedDailyHistory(rebased, calendar: calendar),
             todayHourlyHistory: combinedHourlyHistory(rebased, calendar: calendar),
             yesterdayHourlyHistory: combinedYesterdayHourlyHistory(rebased, calendar: calendar),

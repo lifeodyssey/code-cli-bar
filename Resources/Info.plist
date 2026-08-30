@@ -5,17 +5,17 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>Vibe Bar</string>
+	<string>Code CLI Bar</string>
 	<key>CFBundleExecutable</key>
 	<string>VibeBar</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.astroqore.VibeBar</string>
+	<string>com.lifeodyssey.CodeCLIBar</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Vibe Bar</string>
+	<string>Code CLI Bar</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -32,9 +32,9 @@
 		<false/>
 	</dict>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Vibe Bar asks Terminal or iTerm2 to run a session's resume command when you choose "Open in Terminal". Without this permission the command is copied to the clipboard instead.</string>
+	<string>Code CLI Bar may ask Terminal or iTerm2 to open a local CLI session only after you request it.</string>
 	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2026 AstroQore. Licensed under AGPL-3.0.</string>
+	<string>Copyright © 2026 Code CLI Bar contributors. AGPL-3.0-only.</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
 	<key>SUAllowsAutomaticUpdates</key>
@@ -42,13 +42,9 @@
 	<key>SUAutomaticallyUpdate</key>
 	<false/>
 	<key>SUEnableAutomaticChecks</key>
-	<true/>
+	<false/>
 	<key>SUEnableSystemProfiling</key>
 	<false/>
-	<key>SUFeedURL</key>
-	<string>https://raw.githubusercontent.com/AstroQore/vibe-bar/updates/appcast.xml</string>
-	<key>SUPublicEDKey</key>
-	<string>o0Rf8gjkEf+Fcrq7w3T8CmyYTBy0Q57aGMuwrvzPKo8=</string>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
 	<key>SUShowReleaseNotes</key>

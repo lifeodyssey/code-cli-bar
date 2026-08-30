@@ -44,6 +44,8 @@ public final class CostUsageService: ObservableObject {
     private let homeDirectory: String
     private let mockProvider: () -> Bool
     private let costDataSettingsProvider: () -> CostDataSettings
+    private let enabledToolsProvider: () -> Set<ToolType>
+    private let usagePathProvider: (ToolType) -> String?
     /// Optional per-request event ledger. When present it receives every
     /// event behind each scan, so a usage UI can query request-level
     /// history without re-walking the JSONL. Nil keeps the scan pipeline
@@ -78,11 +80,17 @@ public final class CostUsageService: ObservableObject {
         homeDirectory: String = RealHomeDirectory.path,
         mockProvider: @escaping () -> Bool = { false },
         costDataSettingsProvider: @escaping () -> CostDataSettings = { .default },
+        enabledToolsProvider: @escaping () -> Set<ToolType> = {
+            Set(ToolType.costAwareProviders)
+        },
+        usagePathProvider: @escaping (ToolType) -> String? = { _ in nil },
         usageLedger: UsageEventLedger? = nil
     ) {
         self.homeDirectory = homeDirectory
         self.mockProvider = mockProvider
         self.costDataSettingsProvider = costDataSettingsProvider
+        self.enabledToolsProvider = enabledToolsProvider
+        self.usagePathProvider = usagePathProvider
         self.usageLedger = usageLedger
         // Surface the most recent persisted snapshot per tool immediately so
         // the popover doesn't render an empty Cost panel while the first
@@ -184,7 +192,7 @@ public final class CostUsageService: ObservableObject {
         let retentionDays = costData.retentionDays
         if mockProvider() {
             var results: [ToolType: CostSnapshot] = [:]
-            for tool in ToolType.allCases where tool.supportsTokenCost {
+            for tool in enabledToolsProvider() where tool.supportsTokenCost {
                 if let snap = MockDataProvider.sampleCostSnapshot(for: tool, now: now) {
                     results[tool] = snap
                 }
@@ -222,7 +230,7 @@ public final class CostUsageService: ObservableObject {
         // mix. Once per tool per launch: old days only gain new ledger
         // evidence through rare re-ingest migrations, never a routine pass.
         if let ledger = usageLedger {
-            for tool in ToolType.allCases
+            for tool in enabledToolsProvider()
             where tool.supportsTokenCost && !dayModelBackfillAttempted.contains(tool) {
                 dayModelBackfillAttempted.insert(tool)
                 let missing = await CostHistoryStore.shared.daysMissingModels(tool: tool)
@@ -243,7 +251,7 @@ public final class CostUsageService: ObservableObject {
         // Privacy mode is already handled above (it erases and returns), so
         // reaching here means the ledger is allowed to record.
         let sink = usageLedger
-        for tool in ToolType.allCases where tool.supportsTokenCost {
+        for tool in enabledToolsProvider() where tool.supportsTokenCost {
             if tool == .cursor {
                 let outcome = await AsyncTimeout.run(seconds: Self.perToolScanTimeoutSeconds) {
                     await CursorCostUsageFetcher.fetch(
@@ -304,7 +312,8 @@ public final class CostUsageService: ObservableObject {
                     homeDirectory: home,
                     now: now,
                     retentionDays: retentionDays,
-                    eventSink: sink
+                    eventSink: sink,
+                    sourcePath: self.usagePathProvider(tool)
                 )
             }
             let scanned: CostSnapshot?

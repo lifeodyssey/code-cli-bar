@@ -380,7 +380,7 @@ extension Notification.Name {
     /// out-of-band `QuotaService.refresh` so the misc card flips
     /// from "Needs re-login" to live data within seconds, instead of
     /// waiting for the next `QuotaRefreshScheduler` tick.
-    static let cookiesRefreshed = Notification.Name("com.astroqore.VibeBar.cookiesRefreshed")
+    static let cookiesRefreshed = Notification.Name("com.lifeodyssey.CodeCLIBar.cookiesRefreshed")
 }
 
 private final class NavDelegate: NSObject, WKNavigationDelegate {

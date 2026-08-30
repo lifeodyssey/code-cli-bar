@@ -11,7 +11,7 @@ public enum ProviderPlanDisplay {
             return prefixed(codexDisplayName(rawPlan), brand: "Google AI")
         case .grok:
             return grokDisplayName(rawPlan)
-        case .alibaba, .alibabaTokenPlan, .copilot, .zai, .minimax, .kimi, .cursor, .mimo, .iflytek, .tencentHunyuan, .tencentTokenPlan, .volcengine, .volcengineAgentPlan, .baiduQianfan, .openCodeGo, .kilo, .kiro, .ollama, .openRouter, .warp:
+        case .alibaba, .alibabaTokenPlan, .copilot, .zai, .minimax, .kimi, .cursor, .mimo, .iflytek, .tencentHunyuan, .tencentTokenPlan, .volcengine, .volcengineAgentPlan, .baiduQianfan, .openCodeGo, .dsh, .kilo, .kiro, .ollama, .openRouter, .warp:
             // Misc providers feed `plan` straight through. Each adapter
             // is responsible for normalizing the raw API response
             // (e.g. `Pro Coding` → `Pro`) before it reaches this map.

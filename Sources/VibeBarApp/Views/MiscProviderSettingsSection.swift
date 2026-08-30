@@ -307,7 +307,7 @@ struct MiscProviderSettingsSection: View {
             // Partial-primary providers don't ship a misc-card UI;
             // their settings live in the dedicated SettingsView panel.
             EmptyView()
-        case .codex, .claude:
+        case .codex, .claude, .dsh:
             EmptyView()
         }
     }

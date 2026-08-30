@@ -26,17 +26,20 @@ final class KeyboardFocusPolicyTests: XCTestCase {
             count += source.numberOfOccurrences(of: ".popover(isPresented")
         }
 
-        // The two AppKit hosting roots that can become key: the menu-bar
-        // popover and the Workbench window. The mini window's hosting root
+        // The three AppKit hosting roots that can become key: the inherited
+        // menu-bar popover, Code CLI Bar's compact popover, and the Workbench
+        // window. The mini window's hosting root
         // is deliberately absent — its panel is borderless and
         // non-activating, so it never receives an initial responder.
         let popoverHost = try XCTUnwrap(sources["StatusItemController.swift"])
+        let compactPopoverHost = try XCTUnwrap(sources["MinimalStatusItemController.swift"])
         let workbenchHost = try XCTUnwrap(sources["WorkbenchWindowController.swift"])
         let miniWindowHost = try XCTUnwrap(sources["MiniQuotaWindowController.swift"])
         XCTAssertEqual(popoverHost.numberOfOccurrences(of: ".vibeBarNoInitialFocus()"), 1)
+        XCTAssertEqual(compactPopoverHost.numberOfOccurrences(of: ".vibeBarNoInitialFocus()"), 1)
         XCTAssertEqual(workbenchHost.numberOfOccurrences(of: ".vibeBarNoInitialFocus()"), 1)
         XCTAssertEqual(miniWindowHost.numberOfOccurrences(of: ".vibeBarNoInitialFocus()"), 0)
-        let hostingRootCount = 2
+        let hostingRootCount = 3
 
         let policyCount = sources.values.reduce(0) {
             $0 + $1.numberOfOccurrences(of: ".vibeBarNoInitialFocus()")

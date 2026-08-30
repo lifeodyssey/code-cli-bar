@@ -25,7 +25,7 @@ public struct QuotaActivityContext: Sendable {
 /// failures, and supports a global mock-mode override.
 @MainActor
 public final class QuotaService: ObservableObject {
-    public static let credentialFallbackMaxAge: TimeInterval = 30 * 60
+    public static let credentialFallbackMaxAge = QuotaFreshnessPolicy.credentialFallbackMaxAge
     nonisolated public static let defaultRefreshTimeoutSeconds: Double = 60
     @Published public private(set) var lastSuccessByAccount: [String: AccountQuota] = [:]
     @Published public private(set) var lastErrorByAccount: [String: QuotaError] = [:]
@@ -239,6 +239,25 @@ public final class QuotaService: ObservableObject {
         lastSuccessByAccount[accountId]
     }
 
+    /// Returns quota that is safe to present as current. A future reset alone
+    /// is deliberately insufficient: the utilization may have changed since
+    /// an old snapshot was written.
+    public func currentCachedQuota(
+        for accountId: String,
+        maxAge: TimeInterval,
+        now: Date = Date()
+    ) -> AccountQuota? {
+        guard let quota = lastSuccessByAccount[accountId],
+              !quota.buckets.isEmpty,
+              QuotaFreshnessPolicy.isFresh(
+                  timestamp: quota.queriedAt,
+                  maxAge: maxAge,
+                  now: now
+              )
+        else { return nil }
+        return quota
+    }
+
     /// Opening a provider page should refresh both missing and stale cache.
     /// Previously any cache entry — even one from months ago — suppressed the
     /// page refresh indefinitely.
@@ -248,6 +267,10 @@ public final class QuotaService: ObservableObject {
         maxAge: TimeInterval
     ) -> Bool {
         guard let cached = lastSuccessByAccount[accountId] else { return true }
+        // An empty snapshot is detection state, not usable quota data. Retry it
+        // even when its timestamp is recent so a parser/auth fix can recover on
+        // the very next launch instead of waiting for the normal interval.
+        if cached.buckets.isEmpty { return true }
         if cached.buckets.contains(where: { bucket in
             bucket.resetAt.map { $0 <= now } ?? false
         }) {

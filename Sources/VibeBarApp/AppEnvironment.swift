@@ -6,6 +6,9 @@ import VibeBarCore
 final class AppEnvironment: ObservableObject {
     let accountStore: AccountStore
     let settingsStore: SettingsStore
+    let codeCLISettingsStore: CodeCLIBarSettingsStore
+    let actualCashStore: ActualCashStore
+    let providerDetectionService: CodeCLIProviderDetectionService
     let quotaService: QuotaService
     let scheduler: QuotaRefreshScheduler
     let serviceStatus: ServiceStatusController
@@ -61,6 +64,8 @@ final class AppEnvironment: ObservableObject {
     private var browserGeminiCookieImportInFlight = false
     private var browserGrokCookieImportInFlight = false
     private var pricingRefreshTask: Task<Void, Never>?
+    private var usageRefreshTask: Task<Void, Never>?
+    private let capabilities: AppCapabilities
     private var webCookiePresenceProbedAt: Date?
     private var webCookiePresenceGeneration: UInt64 = 0
     private var routeHealthProbeGeneration: UInt64 = 0
@@ -72,14 +77,16 @@ final class AppEnvironment: ObservableObject {
     /// change made outside Vibe Bar still shows up on the next manual refresh.
     private static let webCookiePresenceTTL: TimeInterval = 5
 
-    init() {
+    init(capabilities: AppCapabilities = .codeCLIBar) {
+        self.capabilities = capabilities
         let settings = SettingsStore()
+        let codeCLISettings = CodeCLIBarSettingsStore()
         let isDemo = DemoMode.isEnabled
         self.updateController = AppUpdateController(
             updateChannel: settings.settings.updateChannel,
             // Sparkle would otherwise read its own defaults and may decide a
             // daily check is due the moment the updater starts.
-            isEnabled: !isDemo
+            isEnabled: !isDemo && capabilities.updater
         )
         let accounts = AccountStore(
             codexUsageMode: settings.codexUsageMode,
@@ -105,6 +112,9 @@ final class AppEnvironment: ObservableObject {
         )
 
         self.settingsStore = settings
+        self.codeCLISettingsStore = codeCLISettings
+        self.actualCashStore = ActualCashStore()
+        self.providerDetectionService = CodeCLIProviderDetectionService()
         self.accountStore = accounts
         self.quotaService = service
         self.pageLayout = PageLayoutModel(settingsStore: settings)
@@ -121,6 +131,21 @@ final class AppEnvironment: ObservableObject {
             settings?.mockEnabled ?? false
         }, costDataSettingsProvider: { [weak settings] in
             settings?.settings.costData ?? .default
+        }, enabledToolsProvider: { [weak codeCLISettings] in
+            guard let codeCLISettings else { return [] }
+            return Set(
+                CodeCLIProvider.allCases.compactMap { provider in
+                    guard codeCLISettings.settings.configuration(for: provider).isEnabled else {
+                        return nil
+                    }
+                    return provider.legacyTool
+                }
+            )
+        }, usagePathProvider: { [weak codeCLISettings] tool in
+            guard let codeCLISettings,
+                  let provider = CodeCLIProvider.allCases.first(where: { $0.legacyTool == tool })
+            else { return nil }
+            return codeCLISettings.settings.configuration(for: provider).customUsagePath
         }, usageLedger: ledger)
         self.costService = costService
         self.remoteProbeService = RemoteProbeService()
@@ -198,32 +223,36 @@ final class AppEnvironment: ObservableObject {
 
         let scheduler = QuotaRefreshScheduler(
             service: service,
-            accountsProvider: { [weak accounts, weak settings] in
-                guard let accounts, let settings else { return [] }
+            accountsProvider: { [weak accounts, weak settings, weak codeCLISettings] in
+                guard let accounts, let settings, let codeCLISettings else { return [] }
                 if settings.mockEnabled {
                     return MockDataProvider.sampleAccounts()
                 }
                 var visibleAccounts: [AccountIdentity] = []
-                for tool in ToolType.dedicatedCardProviders {
-                    if let account = accounts.accounts(for: tool).first {
-                        visibleAccounts.append(account)
+                var seen = Set<String>()
+                for provider in CodeCLIProvider.allCases
+                where codeCLISettings.settings.configuration(for: provider).isEnabled {
+                    let quotaProvider: CodeCLIProvider = provider == .dsh ? .openCodeGo : provider
+                    let quotaConfiguration = codeCLISettings.settings.configuration(for: quotaProvider)
+                    if quotaProvider.usesExperimentalQuota,
+                       !quotaConfiguration.experimentalQuotaEnabled {
+                        continue
                     }
-                }
-                for instance in settings.settings.visibleMiscProviderInstances {
-                    if let account = accounts.account(forMiscProviderInstanceID: instance.id) {
+                    guard let tool = quotaProvider.legacyTool else { continue }
+                    let account = accounts.accounts(for: tool).first
+                        ?? accounts.account(forMiscProviderInstanceID: tool.rawValue)
+                    if let account, seen.insert(account.id).inserted {
                         visibleAccounts.append(account)
                     }
                 }
                 return visibleAccounts
             },
-            intervalProvider: { [weak settings] in
-                settings?.refreshIntervalSeconds ?? AppSettings.default.refreshIntervalSeconds
+            intervalProvider: { [weak codeCLISettings] in
+                codeCLISettings?.settings.quotaRefreshIntervalSeconds ?? 600
             },
-            onRefreshTriggered: {
-                Task { @MainActor in
-                    await costService.refreshAll()
-                }
-            }
+            // Quota and local-usage refreshes are independent. A slow or
+            // failing provider endpoint must never delay the filesystem scan.
+            onRefreshTriggered: {}
         )
         self.scheduler = scheduler
 
@@ -357,7 +386,9 @@ final class AppEnvironment: ObservableObject {
         // pane that documents it is one of the screenshots.
         let mcp = MCPController(environment: self)
         self.mcp = mcp
-        mcp.start(settingsStore: settings)
+        if capabilities.mcpServer {
+            mcp.start(settingsStore: settings)
+        }
 
         // Demo mode stops here. Everything below either leaves the demo home
         // (provider, status, pricing and Relay refreshes; Keychain and browser
@@ -365,29 +396,45 @@ final class AppEnvironment: ObservableObject {
         // with (the cost rescan). See `DemoMode`.
         guard !isDemo else { return }
 
-        scheduler.start()
-        serviceStatus.start()
-        remoteProbeService.start()
+        scheduler.start(refreshStaleImmediately: true)
+        if capabilities.serviceStatus { serviceStatus.start() }
+        if capabilities.remoteProbe { remoteProbeService.start() }
 
         // Kick off an initial cost scan in the background. Cost data updates
         // slowly compared to live quota, so we re-scan only on app relaunch,
         // data-source settings changes, or the explicit Cost Data rescan button.
-        Task { @MainActor in
-            await costService.applyCostDataSettings()
-            await costService.refreshAll()
+        if capabilities.periodicUsageRefresh {
+            scheduleUsageRefreshLoop()
+        } else {
+            Task { @MainActor in
+                await costService.applyCostDataSettings()
+                await costService.refreshAll()
+            }
         }
+
+        providerDetectionService.refresh(settings: codeCLISettings.settings)
+        codeCLISettings.$settings
+            .dropFirst()
+            .sink { [weak self] settings in
+                self?.providerDetectionService.refresh(settings: settings)
+                self?.scheduler.reschedule()
+                self?.scheduleUsageRefreshLoop()
+            }
+            .store(in: &cancellables)
 
         // Refresh every source immediately and then at the interval selected
         // in Settings. Each source has its own last-known-good cache, so one
         // broken upstream does not erase the other catalogs.
         schedulePricingRefreshLoop()
         recheckPrimaryRouteHealth()
-        importPersistentClaudeCookiesAndRefreshIfNeeded()
-        importClaudeBrowserCookiesAndRefreshIfNeeded()
-        importPersistentOpenAICookiesAndRefreshIfNeeded()
-        importOpenAIBrowserCookiesAndRefreshIfNeeded()
-        importGeminiBrowserCookiesAndRefreshIfNeeded()
-        importGrokBrowserCookiesAndRefreshIfNeeded()
+        if capabilities.automaticBrowserCookieImport {
+            importPersistentClaudeCookiesAndRefreshIfNeeded()
+            importClaudeBrowserCookiesAndRefreshIfNeeded()
+            importPersistentOpenAICookiesAndRefreshIfNeeded()
+            importOpenAIBrowserCookiesAndRefreshIfNeeded()
+            importGeminiBrowserCookiesAndRefreshIfNeeded()
+            importGrokBrowserCookiesAndRefreshIfNeeded()
+        }
 
         // Push Claude/Codex extras parsed by adapters into CostUsageService.
         service.$lastSuccessByAccount
@@ -406,6 +453,46 @@ final class AppEnvironment: ObservableObject {
 
     deinit {
         pricingRefreshTask?.cancel()
+        usageRefreshTask?.cancel()
+    }
+
+    private func scheduleUsageRefreshLoop() {
+        guard capabilities.periodicUsageRefresh, !DemoMode.isEnabled else { return }
+        usageRefreshTask?.cancel()
+        usageRefreshTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await costService.applyCostDataSettings()
+                await costService.refreshAll()
+                let seconds = max(
+                    codeCLISettingsStore.settings.usageRefreshIntervalSeconds,
+                    60
+                )
+                do {
+                    try await Task.sleep(for: .seconds(seconds))
+                } catch {
+                    return
+                }
+            }
+        }
+    }
+
+    /// Refresh only the product's two data lanes. This deliberately avoids
+    /// browser-cookie imports, service-status polling, Relay and Workbench
+    /// maintenance.
+    func refreshCodeCLIBar() {
+        accountStore.reload(
+            codexUsageMode: settingsStore.settings.codexUsageMode,
+            claudeUsageMode: settingsStore.claudeUsageMode,
+            geminiUsageMode: settingsStore.geminiUsageMode,
+            antigravityUsageMode: settingsStore.antigravityUsageMode,
+            miscProviderInstances: settingsStore.settings.miscProviderInstances
+        )
+        providerDetectionService.refresh(settings: codeCLISettingsStore.settings)
+        scheduler.triggerRefresh()
+        Task { @MainActor [weak self] in
+            await self?.costService.refreshAll()
+        }
     }
 
     func refreshPricingNow() {

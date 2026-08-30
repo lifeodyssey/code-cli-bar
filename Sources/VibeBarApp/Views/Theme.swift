@@ -344,6 +344,7 @@ enum Theme {
         case .volcengineAgentPlan: return Color(red: 0.96, green: 0.45, blue: 0.22)  // doubao agent amber
         case .baiduQianfan: return Color(red: 0.16, green: 0.40, blue: 0.93)  // baidu blue
         case .openCodeGo:  return Color(red: 0.22, green: 0.66, blue: 0.50)  // green
+        case .dsh:         return Color(red: 0.20, green: 0.47, blue: 0.82)  // deep blue
         case .kilo:        return Color(red: 0.47, green: 0.37, blue: 0.93)  // purple
         case .kiro:        return Color(red: 0.24, green: 0.48, blue: 0.94)  // blue
         case .ollama:      return Color(red: 0.18, green: 0.18, blue: 0.18)  // graphite

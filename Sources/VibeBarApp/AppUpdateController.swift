@@ -26,7 +26,7 @@ final class AppUpdateController: NSObject, ObservableObject, SPUUpdaterDelegate 
     init(bundle: Bundle = .main, updateChannel: UpdateChannel = .main, isEnabled: Bool = true) {
         self.bundle = bundle
         self.updateChannel = updateChannel
-        let hasExpectedBundleIdentifier = bundle.bundleIdentifier == "com.astroqore.VibeBar"
+        let hasExpectedBundleIdentifier = bundle.bundleIdentifier == "com.lifeodyssey.CodeCLIBar"
         let hasFeedURL = bundle.object(forInfoDictionaryKey: "SUFeedURL") as? String != nil
         self.isConfigured = isEnabled && hasExpectedBundleIdentifier && hasFeedURL
         super.init()

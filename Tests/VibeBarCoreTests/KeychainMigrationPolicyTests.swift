@@ -10,7 +10,7 @@ final class KeychainMigrationPolicyTests: XCTestCase {
     }
 
     func testVaultUsesOneStablePhysicalKeychainItem() {
-        XCTAssertEqual(VibeBarCredentialVault.keychainService, "com.astroqore.VibeBar.credential-vault")
+        XCTAssertEqual(VibeBarCredentialVault.keychainService, "com.lifeodyssey.CodeCLIBar.credential-vault")
         XCTAssertEqual(VibeBarCredentialVault.keychainAccount, "vault-v1")
     }
 

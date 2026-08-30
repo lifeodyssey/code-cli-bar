@@ -47,7 +47,10 @@ final class SkillsStoreTests: XCTestCase {
         try await store.upsert(makeSkill(.local(directory: "alpha")))
 
         let url = VibeBarLocalStore.skillsStoreURL(homeDirectory: home.path)
-        XCTAssertEqual(url.path, home.url.appendingPathComponent(".vibebar/skills.json").path)
+        XCTAssertEqual(
+            url.path,
+            home.url.appendingPathComponent("\(VibeBarLocalStore.directoryName)/skills.json").path
+        )
         let permissions = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber
         XCTAssertEqual(permissions?.int16Value, 0o600)
     }

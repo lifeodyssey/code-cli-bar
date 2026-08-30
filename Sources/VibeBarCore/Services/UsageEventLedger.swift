@@ -73,14 +73,15 @@ public actor UsageEventLedger: CostUsageEventSink {
     private let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
     private let calendar: Calendar
     private let dayFormatter: DateFormatter
+    private let databaseURL: URL
 
     /// Bumping this drops and rebuilds every table on the next open. Cursor's
     /// L2 migration is intentionally in-place below so retained rollups are
     /// never discarded merely to change request-source attribution.
-    /// v4 adds the nullable request-level `project` dimension. The ledger is
-    /// reconstructible, so opening an older database rebuilds it and the next
-    /// cost scan replays the source logs with their harness-reported cwd.
-    static let schemaVersion = 4
+    /// v4 added the nullable request-level `project` dimension upstream.
+    /// v5 enforces Code CLI Bar's storage allow-list: rebuilding removes raw
+    /// project paths and request/session ids from pre-fork ledgers.
+    static let schemaVersion = 5
     private static let schemaVersionKey = "schema_version"
     private static let cursorToolMigrationKey = "cursor_tool_v1"
     /// Written by an earlier revision of the Cursor migration. Only read now,
@@ -102,6 +103,7 @@ public actor UsageEventLedger: CostUsageEventSink {
     private static let maximumTrendBuckets = 50_000
 
     public init(url: URL = VibeBarLocalStore.usageEventsLedgerURL) throws {
+        self.databaseURL = url
         if url == VibeBarLocalStore.usageEventsLedgerURL {
             try VibeBarLocalStore.ensureBaseDirectory()
         }
@@ -128,7 +130,9 @@ public actor UsageEventLedger: CostUsageEventSink {
         }
         sqlite3_busy_timeout(handle, 5_000)
         do {
+            try VibeBarLocalStore.protectSQLiteFiles(at: url)
             try Self.initialize(handle)
+            try VibeBarLocalStore.protectSQLiteFiles(at: url)
             database = handle
         } catch {
             sqlite3_close_v2(handle)
@@ -747,6 +751,7 @@ public actor UsageEventLedger: CostUsageEventSink {
     /// Throwing form of `consume`, for tests and for callers that want to
     /// see ingest failures.
     public func ingest(_ batch: UsageEventFileBatch) throws {
+        defer { try? VibeBarLocalStore.protectSQLiteFiles(at: databaseURL) }
         let fileKey = CostUsageScanCache.entryKey(for: batch.filePath)
         if let stored = try storedFingerprint(tool: batch.tool, fileKey: fileKey),
            stored.size == batch.size,
@@ -781,6 +786,7 @@ public actor UsageEventLedger: CostUsageEventSink {
                     cacheRead: cacheRead,
                     cacheCreation: cacheCreation
                 )
+                let persistentEvent = event.privacySafePersistentCopy()
                 // A scanner that could not name the harness still gets the
                 // tool's default, so the column is uniform from the first
                 // ingest and queries never have to special-case NULL.
@@ -791,19 +797,19 @@ public actor UsageEventLedger: CostUsageEventSink {
                     .text(day),
                     .text(event.model),
                     harness.map { Binding.text($0.rawValue) } ?? .null,
-                    event.projectPath.map(Binding.text) ?? .null,
+                    .null,
                     .integer(freshInput),
                     .integer(output),
                     .integer(cacheRead),
                     .integer(cacheCreation),
                     priced.costMicros.map(Binding.integer) ?? .null,
-                    event.sessionId.map(Binding.text) ?? .null,
-                    event.messageId.map(Binding.text) ?? .null,
-                    event.requestId.map(Binding.text) ?? .null,
+                    persistentEvent.sessionId.map(Binding.text) ?? .null,
+                    persistentEvent.messageId.map(Binding.text) ?? .null,
+                    persistentEvent.requestId.map(Binding.text) ?? .null,
                     event.serviceTier.map(Binding.text) ?? .null,
                     event.isSidechain.map { Binding.integer($0 ? 1 : 0) } ?? .null,
                     event.pathRole.map { Binding.text($0.rawValue) } ?? .null,
-                    event.sourceKey.map(Binding.text) ?? .null,
+                    persistentEvent.sourceKey.map(Binding.text) ?? .null,
                     .text(key)
                 ]
                 sqlite3_reset(statement)
@@ -944,7 +950,11 @@ public actor UsageEventLedger: CostUsageEventSink {
             // only `m:<sessionId>` and collapse an entire Claude session into
             // one request. Hash the length-delimited tuple into a printable,
             // fixed-width key instead.
-            let tuple = [sessionId, messageId, requestId]
+            let tuple = [
+                CostUsageScanCache.ParsedEvent.opaque(sessionId, prefix: "session-v1") ?? sessionId,
+                CostUsageScanCache.ParsedEvent.opaque(messageId, prefix: "message-v1") ?? messageId,
+                CostUsageScanCache.ParsedEvent.opaque(requestId, prefix: "request-v1") ?? requestId
+            ]
                 .map { "\($0.utf8.count):\($0)" }
                 .joined(separator: "|")
             return PrivacyPreservingHash.fileComponent(prefix: "cm-v3", rawValue: tuple)
@@ -955,6 +965,13 @@ public actor UsageEventLedger: CostUsageEventSink {
             return PrivacyPreservingHash.fileComponent(
                 prefix: "cursor-ledger-v1",
                 rawValue: sourceKey
+            )
+        }
+        if tool == .openCodeGo || tool == .kimi || tool == .zai || tool == .dsh,
+           let requestId = event.requestId {
+            return PrivacyPreservingHash.fileComponent(
+                prefix: "code-cli-request-v1-\(tool.rawValue)",
+                rawValue: requestId
             )
         }
         let seed = [
@@ -1107,7 +1124,10 @@ public actor UsageEventLedger: CostUsageEventSink {
                 // Cursor dashboard cents are authoritative provider facts,
                 // not estimates from our price table. Source provenance keeps
                 // repricing from overwriting them with catalog rates.
-                if row.sourceKey?.hasPrefix("cursor-event-v1") == true { continue }
+                if row.sourceKey?.hasPrefix("cursor-event-v1") == true
+                    || row.sourceKey?.hasPrefix("opencode-db-v1") == true {
+                    continue
+                }
                 let costBinding: Binding = if let micros = costMicros(for: row) {
                     .integer(micros)
                 } else {
@@ -1292,7 +1312,19 @@ public actor UsageEventLedger: CostUsageEventSink {
                 cacheCreationInputTokens: cacheCreation,
                 outputTokens: output
             )
-        case .alibaba, .alibabaTokenPlan, .copilot, .zai, .minimax, .kimi,
+        case .zai, .kimi, .dsh:
+            CodeCLIUsagePricing.costUSD(
+                tool: row.tool,
+                event: CostUsageScanCache.ParsedEvent(
+                    date: .distantPast,
+                    model: row.model,
+                    input: freshInput,
+                    output: output,
+                    cache: cacheRead + cacheCreation,
+                    cacheCreation: cacheCreation
+                )
+            )
+        case .alibaba, .alibabaTokenPlan, .copilot, .minimax,
              .cursor, .mimo, .iflytek, .tencentHunyuan, .tencentTokenPlan,
              .volcengine, .volcengineAgentPlan, .baiduQianfan, .openCodeGo,
              .kilo, .kiro, .ollama, .openRouter, .warp:

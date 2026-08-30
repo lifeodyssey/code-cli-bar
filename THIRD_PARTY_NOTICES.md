@@ -1,11 +1,22 @@
 # Third-Party Notices
 
-Vibe Bar is licensed under the GNU Affero General Public License v3.0 only.
-This document records the upstream projects whose code is adapted by Vibe Bar,
+Code CLI Bar is licensed under the GNU Affero General Public License v3.0 only.
+It is a modified fork of Vibe Bar. This document records the upstream projects
+whose code is adapted by Code CLI Bar,
 the packages it directly includes, and the projects acknowledged as design or
 interoperability references.
 
 ## Adapted implementations
+
+### DeepSeek dsh session persistence
+
+- Project: `@deepseek-ai/dsh-session-persistence-jsonl`
+- Relationship: Code CLI Bar adapts the MIT-licensed Zstandard frame-boundary
+  parser so it can read dsh's append-only `.jsonl.zstd` usage history without
+  requiring a separate Homebrew dependency. Decompression is performed by the
+  Node runtime already installed with dsh; dsh itself is not bundled.
+- License: [MIT](Resources/ThirdPartyLicenses/DeepSeekDSH.txt)
+- Copyright: Copyright (c) 2026 DeepSeek
 
 ### CodexBar
 

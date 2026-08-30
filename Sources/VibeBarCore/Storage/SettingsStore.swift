@@ -21,7 +21,7 @@ public final class SettingsStore: ObservableObject {
     private var persistSequence: UInt64 = 0
     private static let persistCoalesceNanoseconds: UInt64 = 250_000_000
     private static let writeQueue = DispatchQueue(
-        label: "com.astroqore.VibeBar.settings.persist", qos: .utility
+        label: "com.lifeodyssey.CodeCLIBar.settings.persist", qos: .utility
     )
     /// Only ever touched on `writeQueue`.
     private nonisolated(unsafe) static var lastWrittenSequence: UInt64 = 0

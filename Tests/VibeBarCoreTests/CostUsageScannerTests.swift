@@ -2,6 +2,69 @@ import XCTest
 @testable import VibeBarCore
 
 final class CostUsageScannerTests: XCTestCase {
+    func testCodexClaudeAndGrokHonorCustomSourceFiles() async throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CodeCLIBarCustomPaths-\(UUID().uuidString)", isDirectory: true)
+        let custom = home.appendingPathComponent("custom", isDirectory: true)
+        try FileManager.default.createDirectory(at: custom, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let now = Date(timeIntervalSince1970: 1_779_434_500)
+
+        let codexFile = custom.appendingPathComponent("codex.jsonl")
+        try codexTokenCountLine(
+            timestamp: now,
+            model: "gpt-5",
+            input: 100,
+            cached: 0,
+            output: 20
+        ).write(to: codexFile, atomically: true, encoding: .utf8)
+
+        let claudeFile = custom.appendingPathComponent("claude.jsonl")
+        try claudeAssistantLine(
+            timestamp: now,
+            sessionId: "session",
+            messageId: "message",
+            requestId: "request",
+            model: "claude-sonnet-4-5",
+            input: 100,
+            cacheRead: 0,
+            cacheCreation: 0,
+            output: 20
+        ).write(to: claudeFile, atomically: true, encoding: .utf8)
+
+        let grokFile = custom.appendingPathComponent("updates.jsonl")
+        let milliseconds = Int64(now.timeIntervalSince1970 * 1_000)
+        try """
+        {"_meta":{"totalTokens":120,"agentTimestampMs":\(milliseconds),"modelId":"grok-4"}}
+        """.write(to: grokFile, atomically: true, encoding: .utf8)
+
+        let codex = await CostUsageScanner.scan(
+            tool: .codex,
+            homeDirectory: home.path,
+            now: now,
+            sourcePath: codexFile.path
+        )
+        let claude = await CostUsageScanner.scan(
+            tool: .claude,
+            homeDirectory: home.path,
+            now: now,
+            sourcePath: claudeFile.path
+        )
+        let grok = await CostUsageScanner.scan(
+            tool: .grok,
+            homeDirectory: home.path,
+            now: now,
+            sourcePath: grokFile.path
+        )
+
+        XCTAssertEqual(codex?.allTimeTokens, 120)
+        XCTAssertEqual(claude?.allTimeTokens, 120)
+        XCTAssertEqual(grok?.allTimeTokens, 120)
+        XCTAssertEqual(codex?.jsonlFilesFound, 1)
+        XCTAssertEqual(claude?.jsonlFilesFound, 1)
+        XCTAssertEqual(grok?.jsonlFilesFound, 1)
+    }
+
     func testCodexModelBreakdownsSplitSevenDayTopFromAllTimeRanking() async throws {
         let fileManager = FileManager.default
         let home = fileManager.temporaryDirectory
