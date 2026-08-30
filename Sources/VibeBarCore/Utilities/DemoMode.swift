@@ -2,7 +2,7 @@ import Foundation
 
 /// Demo mode: the real app, pointed at a synthetic home.
 ///
-/// Every screenshot in the README is taken from a Vibe Bar that was launched
+/// Every screenshot in the README is taken from a Code CLI Bar that was launched
 /// this way. Instead of faking views, demo mode redirects
 /// `RealHomeDirectory` to a directory built by `Scripts/demo_home.py` — a
 /// copy of one maintainer's quota, cost, forecast and ledger state with the
@@ -18,7 +18,7 @@ import Foundation
 /// - `VIBEBAR_DEMO_APPEARANCE=light|dark` — pin the appearance for the
 ///   process, so the same surface can be captured in both.
 /// - `VIBEBAR_DEMO_SURFACE=<surface>` — open one surface after launch:
-///   `popover:<page>`, `mini:<regular|compact>`, `workbench:<page>`,
+///   `popover`, `mini:<regular|compact>`, `workbench:<page>`,
 ///   `settings:<section>`, where the identifiers are the app's own raw
 ///   values (`overview`, `openAI`, `usageStats`, `layout`, …).
 /// - `VIBEBAR_DEMO_BACKDROP=0` — skip the solid backdrop window demo mode

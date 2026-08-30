@@ -246,9 +246,18 @@ struct CompactPopoverRoot: View {
     /// including adapters added later.
     private func quota(for provider: CodeCLIProvider, now: Date = Date()) -> AccountQuota? {
         guard let account = account(for: provider) else { return nil }
-        return quotaService.currentCachedQuota(
+        if let current = quotaService.currentCachedQuota(
             for: account.id,
             maxAge: quotaStaleAfter,
+            now: now
+        ) {
+            return current
+        }
+        // Keep only provider-declared cycles that have not reset yet. The
+        // freshness label below remains visible, so this is presented as a
+        // last-known value rather than silently masquerading as live quota.
+        return quotaService.lastKnownCurrentCycleQuota(
+            for: account.id,
             now: now
         )
     }

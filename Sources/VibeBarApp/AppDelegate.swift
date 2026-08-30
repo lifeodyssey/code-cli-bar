@@ -10,8 +10,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var demoPresenter: DemoPresenter?
 
     override init() {
+        let capabilities: AppCapabilities
+        if case .some(.popover(page: _)) = DemoMode.configuration?.surface {
+            capabilities = .codeCLIBar
+        } else {
+            capabilities = DemoMode.isEnabled ? .inheritedDemo : .codeCLIBar
+        }
         self.environment = AppEnvironment(
-            capabilities: DemoMode.isEnabled ? .inheritedDemo : .codeCLIBar
+            capabilities: capabilities
         )
         super.init()
     }
@@ -37,6 +43,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // A demo launch registers nothing with the system and refreshes
             // nothing; it builds the status item like any launch and then
             // opens the one surface it was asked to show.
+            if case .some(.popover(page: _)) = demo.surface {
+                let statusItem = MinimalStatusItemController(environment: env)
+                self.statusItem = statusItem
+                let presenter = DemoPresenter(
+                    configuration: demo,
+                    environment: env,
+                    compactStatusItem: statusItem
+                )
+                self.demoPresenter = presenter
+                presenter.present()
+                SafeLog.info("Code CLI Bar started in demo mode")
+                return
+            }
             let statusItem = StatusItemController(environment: env)
             self.demoStatusItem = statusItem
             let presenter = DemoPresenter(configuration: demo, environment: env, statusItem: statusItem)

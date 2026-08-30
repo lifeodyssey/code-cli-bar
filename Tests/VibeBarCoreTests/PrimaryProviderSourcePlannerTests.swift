@@ -14,10 +14,10 @@ final class PrimaryProviderSourcePlannerTests: XCTestCase {
         XCTAssertEqual(plan, [.cliDetected])
     }
 
-    func testClaudeAutoPrefersWebThenOAuthThenCLI() {
+    func testClaudeAutoPrefersCLIThenOAuthThenWeb() {
         let plan = ClaudeSourcePlanner.resolve(mode: .auto)
 
-        XCTAssertEqual(plan, [.webCookie, .oauthCLI, .cliDetected])
+        XCTAssertEqual(plan, [.cliDetected, .oauthCLI, .webCookie])
     }
 
     func testClaudeWebThenCLIThenOAuthOrder() {
