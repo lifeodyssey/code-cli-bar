@@ -28,7 +28,7 @@ final class KimiCodeNativeQuotaTests: XCTestCase {
         XCTAssertEqual(credential.expiresAt, Date(timeIntervalSince1970: 1_900_000_000))
     }
 
-    func testReaderReturnsExpiredCredentialSoAdapterCanRefreshIt() throws {
+    func testReaderPreservesExpiryForReadOnlyConsumer() throws {
         let json = """
         {
           "access_token": "expired.header.signature",
@@ -106,79 +106,80 @@ final class KimiCodeNativeQuotaTests: XCTestCase {
         XCTAssertEqual(quota.buckets[0].rawWindowSeconds, 604_800)
     }
 
-    func testExpiredNativeOAuthRefreshesInMemoryBeforeFetchingUsage() async throws {
+    func testExpiredNativeCredentialDoesNotMakeAnyRequest() async throws {
+        var requests = 0
+        let adapter = makeAdapter { _ in
+            requests += 1
+            return (401, Data())
+        }
+        do {
+            _ = try await adapter.fetchNativeQuota(
+                KimiCodeCredential(accessToken: "expired", refreshToken: "must-not-use", expiresAt: .distantPast),
+                account: testAccount, queriedAt: Date()
+            )
+            XCTFail("Expired credentials must wait for Kimi Code to renew them")
+        } catch {
+            XCTAssertEqual(error as? QuotaError, .unknown("Open Kimi Code to renew its login, then refresh quota"))
+        }
+        XCTAssertEqual(requests, 0, "The monitor must never rotate a CLI-owned refresh token")
+    }
+
+    func testRejectedNativeCredentialDoesNotRefreshOrRetry() async throws {
+        for status in [401, 403] {
+            var requests = 0
+            let adapter = makeAdapter { request in
+                requests += 1
+                XCTAssertEqual(request.httpMethod, "GET")
+                XCTAssertEqual(request.url?.absoluteString, "https://api.kimi.com/coding/v1/usages")
+                return (status, Data())
+            }
+            do {
+                _ = try await adapter.fetchNativeQuota(
+                    KimiCodeCredential(accessToken: "rejected", refreshToken: "must-not-use", expiresAt: .distantFuture),
+                    account: testAccount, queriedAt: Date()
+                )
+                XCTFail("Rejected credentials must be left to Kimi Code")
+            } catch {
+                XCTAssertEqual(error as? QuotaError, .unknown("Open Kimi Code to renew its login, then refresh quota"))
+            }
+            XCTAssertEqual(requests, 1)
+        }
+    }
+
+    func testNextFetchUsesCredentialRenewedByCLI() async throws {
+        let credentials = CredentialBox()
+        var requests = 0
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [KimiCodeNativeURLProtocol.self]
-        let session = URLSession(configuration: configuration)
-        var requestCount = 0
         KimiCodeNativeURLProtocol.handler = { request in
-            requestCount += 1
-            if requestCount == 1 {
-                XCTAssertEqual(request.url?.absoluteString, "https://auth.kimi.com/api/oauth/token")
-                XCTAssertEqual(request.httpMethod, "POST")
-                XCTAssertEqual(
-                    request.value(forHTTPHeaderField: "Content-Type"),
-                    "application/x-www-form-urlencoded"
-                )
-                let body = String(data: requestBody(request), encoding: .utf8) ?? ""
-                XCTAssertTrue(body.contains("client_id=17e5f671-d194-4dfb-9706-5516cb48c098"))
-                XCTAssertTrue(body.contains("grant_type=refresh_token"))
-                XCTAssertTrue(body.contains("refresh_token=refresh.header.signature"))
-                return (200, Data(
-                    """
-                    {
-                      "access_token": "fresh.header.signature",
-                      "refresh_token": "rotated.header.signature",
-                      "expires_in": 3600,
-                      "token_type": "Bearer",
-                      "scope": "kimi-code"
-                    }
-                    """.utf8
-                ))
-            }
-
-            XCTAssertEqual(request.url?.absoluteString, "https://api.kimi.com/coding/v1/usages")
-            XCTAssertEqual(
-                request.value(forHTTPHeaderField: "Authorization"),
-                "Bearer fresh.header.signature"
-            )
-            return (200, Data(
-                """
-                {
-                  "usage": {
-                    "limit": 1000,
-                    "remaining": 750,
-                    "resetTime": "2026-09-03T04:00:00Z"
-                  }
-                }
-                """.utf8
-            ))
+            requests += 1
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), requests == 1 ? "Bearer first" : "Bearer renewed")
+            return (200, Data("{\"usage\":{\"limit\":100,\"remaining\":75}}".utf8))
         }
         let adapter = KimiQuotaAdapter(
-            session: session,
-            now: { Date(timeIntervalSince1970: 1_800_000_000) },
-            nativeCredentialResolver: {
-                KimiCodeCredential(
-                    accessToken: "expired.header.signature",
-                    refreshToken: "refresh.header.signature",
-                    expiresAt: Date(timeIntervalSince1970: 1_700_000_000)
-                )
-            }
+            session: URLSession(configuration: configuration),
+            nativeCredentialResolver: { credentials.get() }
         )
-        let account = AccountIdentity(
-            id: "kimi-code-local",
-            tool: .kimi,
-            source: .notConfigured
-        )
-
-        let quota = try await adapter.fetch(for: account)
-        let secondQuota = try await adapter.fetch(for: account)
-
-        XCTAssertEqual(requestCount, 3, "The second fetch must reuse the in-memory rotated credential.")
-        XCTAssertEqual(quota.buckets.map(\.id), ["kimi.weekly"])
-        XCTAssertEqual(quota.buckets[0].usedPercent, 25, accuracy: 0.001)
-        XCTAssertEqual(secondQuota.buckets[0].usedPercent, 25, accuracy: 0.001)
+        _ = try await adapter.fetch(for: testAccount)
+        credentials.renew()
+        _ = try await adapter.fetch(for: testAccount)
+        XCTAssertEqual(requests, 2)
     }
+
+    private var testAccount: AccountIdentity {
+        AccountIdentity(id: "kimi-code-local", tool: .kimi, source: .notConfigured)
+    }
+
+    private func makeAdapter(
+        handler: @escaping (URLRequest) throws -> (Int, Data)
+    ) -> KimiQuotaAdapter {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [KimiCodeNativeURLProtocol.self]
+        KimiCodeNativeURLProtocol.handler = handler
+        return KimiQuotaAdapter(session: URLSession(configuration: configuration))
+    }
+
 }
 
 private final class KimiCodeNativeURLProtocol: URLProtocol {
@@ -208,18 +209,19 @@ private final class KimiCodeNativeURLProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
-private func requestBody(_ request: URLRequest) -> Data {
-    if let body = request.httpBody { return body }
-    guard let stream = request.httpBodyStream else { return Data() }
+private final class CredentialBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var token = "first"
 
-    stream.open()
-    defer { stream.close() }
-    var body = Data()
-    var buffer = [UInt8](repeating: 0, count: 1_024)
-    while stream.hasBytesAvailable {
-        let count = stream.read(&buffer, maxLength: buffer.count)
-        guard count > 0 else { break }
-        body.append(buffer, count: count)
+    func get() -> KimiCodeCredential {
+        lock.lock()
+        defer { lock.unlock() }
+        return KimiCodeCredential(accessToken: token, expiresAt: .distantFuture)
     }
-    return body
+
+    func renew() {
+        lock.lock()
+        defer { lock.unlock() }
+        token = "renewed"
+    }
 }

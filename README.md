@@ -69,6 +69,11 @@ Each provider can be disabled or pointed at a custom path. Local usage and
 remote quota are separate: finding a CLI history does not imply that its
 account quota is available.
 
+Kimi Code owns its CLI login renewal. The quota monitor reads the current
+credential without refreshing or writing it; if it expires, open Kimi Code
+to renew the login and refresh quota again. This avoids competing with the
+CLI for its shared OAuth refresh token.
+
 ## Money without pretending it is a bill
 
 The headline dollar value is an **API-equivalent estimate**, not an invoice.

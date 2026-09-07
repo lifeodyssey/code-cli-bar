@@ -425,7 +425,10 @@ final class KimiParserTests: XCTestCase {
             XCTAssertEqual(error, .network("timeout"))
         }
         let requestedPaths = await recorder.requestedPaths()
-        XCTAssertEqual(requestedPaths, [membershipPath, legacyPath])
+        // The 1 ms deadline can expire before the membership task starts on
+        // a busy executor. Both schedules must preserve the timeout error and
+        // attempt the legacy fallback exactly once.
+        XCTAssertTrue(requestedPaths == [membershipPath, legacyPath] || requestedPaths == [legacyPath])
     }
 
     func testMembershipCancellationDoesNotCallLegacy() async throws {
