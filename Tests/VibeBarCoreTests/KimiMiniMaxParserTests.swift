@@ -413,22 +413,28 @@ final class KimiParserTests: XCTestCase {
             delayNanoseconds: [membershipPath: 50_000_000]
         )
 
+        let membershipAttempted = expectation(description: "Membership request attempted")
         do {
             _ = try await KimiQuotaAdapter.fetchSnapshot(
                 authToken: "synthetic.header.signature",
                 queriedAt: now,
                 membershipTimeoutSeconds: 0.001,
-                request: { request in try await recorder.data(for: request) }
+                request: { request in
+                    defer {
+                        if request.url?.path == membershipPath { membershipAttempted.fulfill() }
+                    }
+                    return try await recorder.data(for: request)
+                }
             )
             XCTFail("Expected timeout")
         } catch let error as QuotaError {
             XCTAssertEqual(error, .network("timeout"))
         }
+        // A timed-out task may be scheduled late on a busy executor. Wait
+        // for it to record its attempt before asserting both requests ran.
+        await fulfillment(of: [membershipAttempted], timeout: 5)
         let requestedPaths = await recorder.requestedPaths()
-        // The 1 ms deadline can expire before the membership task starts on
-        // a busy executor. Both schedules must preserve the timeout error and
-        // attempt the legacy fallback exactly once.
-        XCTAssertTrue(requestedPaths == [membershipPath, legacyPath] || requestedPaths == [legacyPath])
+        XCTAssertEqual(requestedPaths.sorted(), [membershipPath, legacyPath].sorted())
     }
 
     func testMembershipCancellationDoesNotCallLegacy() async throws {
