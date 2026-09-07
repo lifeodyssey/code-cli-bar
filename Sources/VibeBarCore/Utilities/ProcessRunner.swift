@@ -8,6 +8,34 @@ import Foundation
 /// codexbar's SubprocessRunner: no process-group escalation and only
 /// caller-supplied environment overrides.
 public enum ProcessRunner {
+    /// Bounded bridge for credential readers whose callers are synchronous.
+    /// The detached task does not inherit the calling actor; pipe draining,
+    /// cancellation and child cleanup remain owned by the async runner.
+    static func runSynchronously(
+        binary: String,
+        arguments: [String],
+        timeout: TimeInterval = 5,
+        label: String = "process"
+    ) throws -> Result {
+        let completion = SynchronousProcessCompletion()
+        let task = Task.detached(priority: .userInitiated) {
+            do {
+                completion.finish(.success(try await run(
+                    binary: binary, arguments: arguments, timeout: timeout, label: label
+                )))
+            } catch {
+                completion.finish(.failure(error))
+            }
+        }
+        // Allow the runner's termination grace period, but never wait without
+        // a deadline even if its executor is temporarily saturated.
+        guard let result = completion.wait(until: Date().addingTimeInterval(max(0, timeout) + 2)) else {
+            task.cancel()
+            throw Error.timedOut(label)
+        }
+        return try result.get()
+    }
+
     public struct Result: Sendable {
         public let stdout: String
         public let stderr: String
@@ -124,6 +152,27 @@ public enum ProcessRunner {
             }
         }
         return data
+    }
+}
+
+private final class SynchronousProcessCompletion: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var result: Swift.Result<ProcessRunner.Result, Swift.Error>?
+
+    func finish(_ result: Swift.Result<ProcessRunner.Result, Swift.Error>) {
+        condition.lock()
+        self.result = result
+        condition.signal()
+        condition.unlock()
+    }
+
+    func wait(until deadline: Date) -> Swift.Result<ProcessRunner.Result, Swift.Error>? {
+        condition.lock()
+        defer { condition.unlock() }
+        while result == nil {
+            if !condition.wait(until: deadline) { break }
+        }
+        return result
     }
 }
 
