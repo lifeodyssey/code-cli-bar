@@ -2,6 +2,24 @@
 
 Notable changes to Code CLI Bar are recorded here. Dates use YYYY-MM-DD.
 
+## 1.6.0 - 2026-09-07
+
+### Fixes
+
+- Stop rotating Kimi Code's shared OAuth refresh token from the quota monitor.
+  Read the CLI's current credential on each refresh and prompt users to open
+  Kimi Code when it needs renewal, preventing the monitor from leaving the CLI
+  with an obsolete refresh token.
+- Read Claude Code credentials through macOS's system `security` executable,
+  with bounded execution and credential-safe errors. Preserve file fallback
+  without misreporting denied Keychain access as a missing account.
+- Correct generic Keychain password queries by resolving a unique item before
+  reading its password.
+- Interpret OpenCode Go's native percentage fields consistently: 1 means 1%,
+  rather than 100%.
+- Label the compact quota headline with its period or model so the displayed
+  percentage has a clear meaning.
+
 ## 1.5.0 - 2026-08-30
 
 ### Features

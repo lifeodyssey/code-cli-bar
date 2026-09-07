@@ -91,10 +91,22 @@ public enum KeychainStore {
             }
         }
 
+        return try readGenericPasswordData(
+            service: service,
+            account: account,
+            useDataProtectionKeychain: useDataProtectionKeychain
+        )
+    }
+
+    static func readGenericPasswordData(
+        service: String,
+        account: String?,
+        useDataProtectionKeychain: Bool,
+        copyMatching: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus = SecItemCopyMatching
+    ) throws -> Data {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecReturnData as String: true
+            kSecAttrService as String: service
         ]
         if useDataProtectionKeychain {
             query[kSecUseDataProtectionKeychain as String] = true
@@ -102,32 +114,42 @@ public enum KeychainStore {
         if let account {
             query[kSecAttrAccount as String] = account
             query[kSecMatchLimit as String] = kSecMatchLimitOne
+            query[kSecReturnData as String] = true
         } else {
             query[kSecMatchLimit as String] = kSecMatchLimitAll
+            query[kSecReturnRef as String] = true
         }
-        KeychainNoUIQuery.apply(to: &query, uiPolicy: .skip)
+        // Report protected items as access failures. Skipping them makes an
+        // existing login look absent and hides the reason refresh stopped.
+        KeychainNoUIQuery.apply(to: &query, uiPolicy: .fail)
 
+        var result = try executePasswordQuery(query, copyMatching: copyMatching)
+        if account == nil {
+            let items = (result as? [AnyObject]) ?? result.map { [$0] } ?? []
+            guard !items.isEmpty else { throw KeychainError.itemNotFound }
+            guard items.count == 1 else { throw KeychainError.ambiguousItem(items.count) }
+
+            // macOS rejects password data combined with kSecMatchLimitAll.
+            // Resolve a unique reference first so multiple accounts remain an error.
+            query.removeValue(forKey: kSecReturnRef as String)
+            query[kSecMatchLimit as String] = kSecMatchLimitOne
+            query[kSecMatchItemList as String] = items
+            query[kSecReturnData as String] = true
+            result = try executePasswordQuery(query, copyMatching: copyMatching)
+        }
+        guard let data = result as? Data else { throw KeychainError.itemNotFound }
+        return data
+    }
+
+    private static func executePasswordQuery(
+        _ query: [String: Any],
+        copyMatching: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus
+    ) throws -> AnyObject? {
         var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
+        let status = copyMatching(query as CFDictionary, &result)
         switch status {
         case errSecSuccess:
-            if account == nil {
-                if let items = result as? [Data] {
-                    guard items.count == 1 else {
-                        throw items.isEmpty ? KeychainError.itemNotFound : KeychainError.ambiguousItem(items.count)
-                    }
-                    return items[0]
-                }
-                if let data = result as? Data {
-                    return data
-                }
-                throw KeychainError.itemNotFound
-            }
-            guard let data = result as? Data else {
-                throw KeychainError.itemNotFound
-            }
-            return data
+            return result
         case errSecItemNotFound:
             throw KeychainError.itemNotFound
         case errSecInteractionNotAllowed:

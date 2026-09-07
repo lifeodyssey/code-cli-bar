@@ -443,7 +443,7 @@ private struct CompactProviderRow: View {
                 VStack(alignment: .leading, spacing: 5) {
                     CompactQuotaBar(percent: bucket.usedPercent)
                     HStack {
-                        Text("\(Int(bucket.usedPercent.rounded()))% used")
+                        Text("\(bucket.compactDetailTitle) · \(Int(bucket.usedPercent.rounded()))% used")
                         Spacer()
                         Text(resetText(bucket.resetAt))
                     }

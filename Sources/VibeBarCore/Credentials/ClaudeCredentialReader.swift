@@ -11,20 +11,53 @@ public enum ClaudeCredentialReader {
     private static let keychainService = "Claude Code-credentials"
 
     public static func loadFromCLI() throws -> ClaudeCredential {
-        if let fromKeychain = try? readFromKeychain() {
-            return fromKeychain
-        }
-        return try readFromCredentialsJSON()
+        try loadCredential(
+            preferred: { try readFromKeychain() },
+            fallback: { try readFromCredentialsJSON() }
+        )
     }
 
     public static func loadFromOAuth() throws -> ClaudeCredential {
-        if let fromFile = try? readFromCredentialsJSON(source: .oauthCLI) {
-            return fromFile
+        try loadCredential(
+            preferred: { try readFromCredentialsJSON(source: .oauthCLI) },
+            fallback: { try readFromKeychain(source: .oauthCLI) }
+        )
+    }
+
+    static func loadCredential(
+        preferred: () throws -> ClaudeCredential,
+        fallback: () throws -> ClaudeCredential
+    ) throws -> ClaudeCredential {
+        let preferredError: QuotaError
+        do {
+            return try preferred()
+        } catch {
+            preferredError = credentialError(error)
         }
-        if let fromKeychain = try? readFromKeychain(source: .oauthCLI) {
-            return fromKeychain
+        do {
+            return try fallback()
+        } catch {
+            // A missing alternative does not mean the existing login is
+            // missing too. Preserve an access/parse failure for the UI.
+            throw preferredError == .noCredential ? credentialError(error) : preferredError
         }
-        throw QuotaError.noCredential
+    }
+
+    private static func credentialError(_ error: Error) -> QuotaError {
+        if let error = error as? QuotaError { return error }
+        switch error as? KeychainStore.KeychainError {
+        case .itemNotFound:
+            return .noCredential
+        case .interactionNotAllowed:
+            return .unknown("Keychain access unavailable for Claude Code")
+        case .ambiguousItem:
+            return .unknown("Multiple Claude Code logins found in Keychain")
+        case .unhandledStatus(let status):
+            SafeLog.warn("Claude Keychain read failed with status \(status)")
+            return .unknown("Could not read Claude Code login from Keychain")
+        case nil:
+            return .unknown("Could not read Claude Code login")
+        }
     }
 
     public static func decode(jsonString: String, source: CredentialSource) throws -> ClaudeCredential {
@@ -63,9 +96,37 @@ public enum ClaudeCredentialReader {
         )
     }
 
-    private static func readFromKeychain(source: CredentialSource = .cliDetected) throws -> ClaudeCredential {
-        let raw = try KeychainStore.readString(service: keychainService)
-        return try decode(jsonString: raw, source: source)
+    static func readFromKeychain(
+        source: CredentialSource = .cliDetected,
+        accessAllowed: Bool = !DemoMode.isEnabled && !KeychainAccessGate.isDisabled,
+        run: (String, [String], TimeInterval) throws -> ProcessRunner.Result = { binary, arguments, timeout in
+            try ProcessRunner.runSynchronously(
+                binary: binary, arguments: arguments, timeout: timeout, label: "Claude Keychain"
+            )
+        }
+    ) throws -> ClaudeCredential {
+        guard accessAllowed else { throw QuotaError.noCredential }
+        let result: ProcessRunner.Result
+        do {
+            // Use Apple's stable executable identity, as CC Switch does.
+            // Credentials stay in memory; never log either output stream.
+            result = try run("/usr/bin/security", [
+                "find-generic-password", "-s", keychainService, "-w"
+            ], 5)
+        } catch ProcessRunner.Error.timedOut {
+            throw QuotaError.unknown("Timed out reading Claude Code login from Keychain")
+        } catch {
+            throw QuotaError.unknown("Could not read Claude Code login from Keychain")
+        }
+        switch result.terminationStatus {
+        case 0:
+            return try decode(jsonString: result.stdout, source: source)
+        case 44: // errSecItemNotFound (-25300), truncated to a process exit code.
+            throw QuotaError.noCredential
+        default:
+            SafeLog.warn("Claude security read failed with exit status \(result.terminationStatus)")
+            throw QuotaError.unknown("Keychain access unavailable for Claude Code")
+        }
     }
 
     private static func readFromCredentialsJSON(source: CredentialSource = .cliDetected) throws -> ClaudeCredential {

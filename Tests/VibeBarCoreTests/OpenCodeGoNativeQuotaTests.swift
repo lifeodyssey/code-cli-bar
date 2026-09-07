@@ -116,6 +116,32 @@ final class OpenCodeGoNativeQuotaTests: XCTestCase {
         XCTAssertEqual(quota.buckets.map(\.usedPercent), [0, 0])
         XCTAssertTrue(quota.buckets.allSatisfy { $0.resetAt == nil })
     }
+
+    func testNativePercentFieldsBelowOrEqualToOneStayPercentages() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [OpenCodeGoNativeURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        OpenCodeGoNativeURLProtocol.handler = { _ in
+            (200, Data("""
+            {"usage": {
+              "rolling": {"percent": 0.5, "resetsAt": "2026-09-06T20:00:00Z"},
+              "weekly": {"percent": 5, "resetsAt": "2026-09-07T00:00:00Z"},
+              "monthly": {"percent": 1, "resetsAt": "2026-10-04T00:00:00Z"}
+            }}
+            """.utf8))
+        }
+        let adapter = OpenCodeGoQuotaAdapter(
+            session: session,
+            environment: [:],
+            credentialResolver: { OpenCodeGoCredential(apiKey: "synthetic-go-key") }
+        )
+        let quota = try await adapter.fetch(for: AccountIdentity(
+            id: "opencode-go-local", tool: .openCodeGo, source: .notConfigured
+        ))
+
+        XCTAssertEqual(quota.buckets.map(\.usedPercent), [0.5, 5, 1])
+        XCTAssertTrue(quota.buckets.allSatisfy { $0.resetAt != nil })
+    }
 }
 
 private final class OpenCodeGoNativeURLProtocol: URLProtocol {

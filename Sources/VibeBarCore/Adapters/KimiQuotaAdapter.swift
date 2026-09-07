@@ -1,5 +1,8 @@
 import Foundation
 
+/// Kimi Code CLI quota uses its current on-disk access token without renewal.
+/// The separate kimi.com browser path below manages its imported web session.
+///
 /// Moonshot / Kimi (kimi.com) usage adapter.
 ///
 /// Auth: Kimi access + refresh JWTs. The shared Browser Cookies importer reads
@@ -26,7 +29,6 @@ public struct KimiQuotaAdapter: QuotaAdapter {
     private let session: URLSession
     private let now: @Sendable () -> Date
     private let nativeCredentialResolver: @Sendable () throws -> KimiCodeCredential
-    private let nativeCredentialCache: KimiCodeRuntimeCredentialCache
 
     fileprivate static let accessTokenCredential = ChromiumLocalStorageCredential(
         origin: "https://www.kimi.com",
@@ -64,10 +66,6 @@ public struct KimiQuotaAdapter: QuotaAdapter {
     private static let codingPlanEndpoint = URL(string:
         "https://api.kimi.com/coding/v1/usages"
     )!
-    private static let codingOAuthRefreshEndpoint = URL(string:
-        "https://auth.kimi.com/api/oauth/token"
-    )!
-    private static let codingOAuthClientID = "17e5f671-d194-4dfb-9706-5516cb48c098"
     private static let membershipStatsWallTimeSeconds: Double = 10
 
     public init(
@@ -77,7 +75,6 @@ public struct KimiQuotaAdapter: QuotaAdapter {
     ) {
         self.session = session
         self.now = now
-        self.nativeCredentialCache = KimiCodeRuntimeCredentialCache()
         self.nativeCredentialResolver = nativeCredentialResolver ?? {
             try KimiCodeCredentialReader.load()
         }
@@ -87,11 +84,8 @@ public struct KimiQuotaAdapter: QuotaAdapter {
         let queriedAt = now()
         var nativeError: QuotaError?
         do {
-            let credential = nativeCredentialCache.preferred(
-                over: try nativeCredentialResolver(),
-                at: queriedAt
-            )
-            return try await fetchWithRefreshingNativeCredential(
+            let credential = try nativeCredentialResolver()
+            return try await fetchNativeQuota(
                 credential,
                 account: account,
                 queriedAt: queriedAt
@@ -122,118 +116,23 @@ public struct KimiQuotaAdapter: QuotaAdapter {
         return aggregated
     }
 
-    private func fetchWithRefreshingNativeCredential(
+    /// Kimi Code owns refresh-token rotation and its cross-process lock.
+    /// Refreshing a borrowed token here could invalidate the CLI's on-disk
+    /// credential, even without writing that file. Only consume access tokens.
+    func fetchNativeQuota(
         _ credential: KimiCodeCredential,
         account: AccountIdentity,
         queriedAt: Date
     ) async throws -> AccountQuota {
-        var activeCredential = credential
-        var didRefresh = false
-
-        if activeCredential.isExpired(at: queriedAt) {
-            activeCredential = try await refreshNativeCredential(
-                activeCredential,
-                queriedAt: queriedAt
-            )
-            didRefresh = true
-        }
-
+        let renewalRequired = QuotaError.unknown("Open Kimi Code to renew its login, then refresh quota")
+        guard !credential.isExpired(at: queriedAt) else { throw renewalRequired }
         do {
             return try await fetchWithNativeCredential(
-                activeCredential,
-                account: account,
-                queriedAt: queriedAt
+                credential, account: account, queriedAt: queriedAt
             )
-        } catch let error as QuotaError where error.isCredentialState && !didRefresh {
-            activeCredential = try await refreshNativeCredential(
-                activeCredential,
-                queriedAt: queriedAt
-            )
-            return try await fetchWithNativeCredential(
-                activeCredential,
-                account: account,
-                queriedAt: queriedAt
-            )
+        } catch let error as QuotaError where error.isCredentialState {
+            throw renewalRequired
         }
-    }
-
-    /// Uses Kimi Code's own OAuth refresh contract, but intentionally keeps the
-    /// rotated token in memory. The CLI remains the sole owner of its credential
-    /// file, so this adapter never rewrites ~/.kimi-code/credentials.
-    private func refreshNativeCredential(
-        _ credential: KimiCodeCredential,
-        queriedAt: Date
-    ) async throws -> KimiCodeCredential {
-        guard let refreshToken = credential.refreshToken else {
-            throw QuotaError.needsLogin
-        }
-
-        let request = Self.nativeRefreshRequest(refreshToken: refreshToken)
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch let error as URLError where error.code == .cancelled {
-            throw error
-        } catch {
-            throw QuotaError.network("Kimi OAuth refresh failed: \(error.localizedDescription)")
-        }
-
-        guard let http = response as? HTTPURLResponse else {
-            throw QuotaError.network("Kimi OAuth refresh returned an invalid response")
-        }
-        guard http.statusCode == 200 else {
-            if http.statusCode == 401 || http.statusCode == 403 || Self.oauthErrorCode(data) == "invalid_grant" {
-                throw QuotaError.needsLogin
-            }
-            if http.statusCode == 429 { throw QuotaError.rateLimited }
-            throw QuotaError.network("Kimi OAuth refresh returned HTTP \(http.statusCode)")
-        }
-
-        let refreshed: KimiCodeOAuthRefreshResponse
-        do {
-            refreshed = try JSONDecoder().decode(KimiCodeOAuthRefreshResponse.self, from: data)
-        } catch {
-            throw QuotaError.parseFailure("Kimi OAuth refresh response is invalid")
-        }
-        let accessToken = refreshed.accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        let rotatedRefreshToken = refreshed.refreshToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !accessToken.isEmpty, !rotatedRefreshToken.isEmpty, refreshed.expiresIn > 0 else {
-            throw QuotaError.parseFailure("Kimi OAuth refresh response is incomplete")
-        }
-        let credential = KimiCodeCredential(
-            accessToken: accessToken,
-            refreshToken: rotatedRefreshToken,
-            expiresAt: queriedAt.addingTimeInterval(refreshed.expiresIn)
-        )
-        nativeCredentialCache.store(credential)
-        return credential
-    }
-
-    private static func nativeRefreshRequest(refreshToken: String) -> URLRequest {
-        var components = URLComponents()
-        components.queryItems = [
-            URLQueryItem(name: "client_id", value: codingOAuthClientID),
-            URLQueryItem(name: "grant_type", value: "refresh_token"),
-            URLQueryItem(name: "refresh_token", value: refreshToken)
-        ]
-
-        var request = URLRequest(url: codingOAuthRefreshEndpoint)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 15
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
-        return request
-    }
-
-    private static func oauthErrorCode(_ data: Data) -> String? {
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
-        }
-        return root["error"] as? String
     }
 
     private func fetchWithNativeCredential(
@@ -665,54 +564,6 @@ struct KimiCredential: Sendable, Equatable {
 private struct KimiRefreshTokenResponse: Decodable {
     let accessToken: String
     let refreshToken: String
-}
-
-private struct KimiCodeOAuthRefreshResponse: Decodable {
-    let accessToken: String
-    let refreshToken: String
-    let expiresIn: TimeInterval
-
-    private enum CodingKeys: String, CodingKey {
-        case accessToken = "access_token"
-        case refreshToken = "refresh_token"
-        case expiresIn = "expires_in"
-    }
-}
-
-/// Holds a rotated Kimi Code OAuth pair for this adapter's process lifetime.
-/// Kimi Code owns the on-disk credential, so the monitor never persists this
-/// value or writes back into the CLI's store.
-private final class KimiCodeRuntimeCredentialCache: @unchecked Sendable {
-    private let lock = NSLock()
-    private var credential: KimiCodeCredential?
-
-    func preferred(over external: KimiCodeCredential, at date: Date) -> KimiCodeCredential {
-        lock.withLock {
-            guard let cached = credential else {
-                credential = external
-                return external
-            }
-            if !cached.isExpired(at: date) { return cached }
-            if !external.isExpired(at: date) {
-                credential = external
-                return external
-            }
-
-            // Both are expired. Keep the one issued later so the next refresh
-            // uses the most recently rotated refresh token.
-            if let externalExpiry = external.expiresAt,
-               let cachedExpiry = cached.expiresAt,
-               externalExpiry > cachedExpiry {
-                credential = external
-                return external
-            }
-            return cached
-        }
-    }
-
-    func store(_ credential: KimiCodeCredential) {
-        lock.withLock { self.credential = credential }
-    }
 }
 
 // MARK: - JWT session info

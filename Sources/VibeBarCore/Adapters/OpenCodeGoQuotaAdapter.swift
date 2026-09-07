@@ -358,7 +358,8 @@ enum OpenCodeGoResponseParser {
             percent = used / limit * 100
         }
         guard var resolvedPercent = percent else { return nil }
-        if resolvedPercent <= 1, resolvedPercent >= 0 { resolvedPercent *= 100 }
+        // These fields are already percentages. In particular, native
+        // `percent: 1` means 1% used, not a fraction representing 100%.
         resolvedPercent = max(0, min(100, resolvedPercent))
         let resetAt = firstInt(forKeys: resetInKeys, in: dict)
             .map { now.addingTimeInterval(TimeInterval(max(0, $0))) }
