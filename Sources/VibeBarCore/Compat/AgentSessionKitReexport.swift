@@ -13,15 +13,15 @@ import Foundation
 
 // MARK: - CostUsageScanner primitives that became package utilities
 
-/// The cost scanner still owns *pricing* and *ledger* concerns, but the file
-/// walking and the harness recognition it shares with the session adapters
-/// are now the package's. These forwarders keep both call sites and their
-/// tests on the name they have always used.
+/// Harness recognition stays in the package. Cost-file walking uses a host
+/// reader with bounded temporary allocations until the kit offers that
+/// guarantee. These entry points preserve existing callers and tests.
 extension CostUsageScanner {
-    /// Linear-time JSONL walk. See `JSONLLineScanner.forEachLine`.
+    /// Cost scans need per-record pools even when the shared session kit's
+    /// transcript walker does not provide them.
     @discardableResult
     static func forEachJSONLLine(in file: URL, _ body: (Data) -> Void) -> Bool {
-        JSONLLineScanner.forEachLine(in: file, body)
+        CostUsageLineReader.forEachLine(in: file, body)
     }
 
     static var claudeCoworkDirectoryName: String { ClaudeCoworkPaths.directoryName }
