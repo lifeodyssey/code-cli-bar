@@ -12,7 +12,10 @@ import time
 
 
 def command(*args):
-    return subprocess.run(args, text=True, capture_output=True, timeout=30)
+    try:
+        return subprocess.run(args, text=True, capture_output=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(args, returncode=124, stdout='', stderr='Probe timed out')
 
 
 def footprint(pid):
@@ -51,7 +54,10 @@ def main():
         writer.writeheader()
         while True:
             current = command('/bin/ps', '-p', str(args.pid), '-o', 'lstart=', '-o', 'comm=')
-            if current.returncode or current.stdout != identity.stdout:
+            if current.returncode:
+                status = 'process_unavailable'
+                break
+            if current.stdout != identity.stdout:
                 status = 'process_exited_or_changed'
                 break
             result = command('/bin/ps', '-p', str(args.pid), '-o', 'rss=', '-o', '%cpu=')
