@@ -250,47 +250,49 @@ enum CodeCLIUsageScanner {
 
         var events: [CostUsageScanCache.ParsedEvent] = []
         while sqlite3_step(statement) == SQLITE_ROW {
-            guard let rawData = columnString(statement, 3)?.data(using: .utf8),
-                  let object = (try? JSONSerialization.jsonObject(with: rawData)) as? [String: Any],
-                  object["role"] as? String == "assistant",
-                  object["providerID"] as? String == "opencode-go",
-                  let tokens = object["tokens"] as? [String: Any]
-            else { continue }
+            autoreleasepool {
+                guard let rawData = columnString(statement, 3)?.data(using: .utf8),
+                      let object = (try? JSONSerialization.jsonObject(with: rawData)) as? [String: Any],
+                      object["role"] as? String == "assistant",
+                      object["providerID"] as? String == "opencode-go",
+                      let tokens = object["tokens"] as? [String: Any]
+                else { return }
 
-            let input = nonnegativeInt(tokens["input"])
-            let output = nonnegativeInt(tokens["output"]) + nonnegativeInt(tokens["reasoning"])
-            let cache = tokens["cache"] as? [String: Any]
-            let cacheRead = nonnegativeInt(cache?["read"])
-            let cacheWrite = nonnegativeInt(cache?["write"])
-            guard input + output + cacheRead + cacheWrite > 0 else { continue }
+                let input = nonnegativeInt(tokens["input"])
+                let output = nonnegativeInt(tokens["output"]) + nonnegativeInt(tokens["reasoning"])
+                let cache = tokens["cache"] as? [String: Any]
+                let cacheRead = nonnegativeInt(cache?["read"])
+                let cacheWrite = nonnegativeInt(cache?["write"])
+                guard input + output + cacheRead + cacheWrite > 0 else { return }
 
-            let time = object["time"] as? [String: Any]
-            let fallbackTime = sqlite3_column_int64(statement, 2)
-            let date = dateFromUnixMilliseconds(
-                int64(time?["completed"] ?? time?["created"]),
-                fallback: fallbackTime
-            )
-            let message = columnString(statement, 0) ?? ""
-            let session = columnString(statement, 1) ?? ""
-            let requestKey = opaque(
-                prefix: "opencode-request-v1",
-                raw: "\(session.utf8.count):\(session)|\(message)"
-            )
-            events.append(
-                CostUsageScanCache.ParsedEvent(
-                    date: date,
-                    model: nonempty(object["modelID"] as? String) ?? "unknown",
-                    input: input,
-                    output: output,
-                    cache: cacheRead + cacheWrite,
-                    cacheCreation: cacheWrite,
-                    reportedCostUSD: nonnegativeDouble(object["cost"]),
-                    sessionId: opaque(prefix: "opencode-session-v1", raw: session),
-                    messageId: opaque(prefix: "opencode-message-v1", raw: message),
-                    requestId: requestKey,
-                    sourceKey: opaque(prefix: "opencode-db-v1", raw: database.path)
+                let time = object["time"] as? [String: Any]
+                let fallbackTime = sqlite3_column_int64(statement, 2)
+                let date = dateFromUnixMilliseconds(
+                    int64(time?["completed"] ?? time?["created"]),
+                    fallback: fallbackTime
                 )
-            )
+                let message = columnString(statement, 0) ?? ""
+                let session = columnString(statement, 1) ?? ""
+                let requestKey = opaque(
+                    prefix: "opencode-request-v1",
+                    raw: "\(session.utf8.count):\(session)|\(message)"
+                )
+                events.append(
+                    CostUsageScanCache.ParsedEvent(
+                        date: date,
+                        model: nonempty(object["modelID"] as? String) ?? "unknown",
+                        input: input,
+                        output: output,
+                        cache: cacheRead + cacheWrite,
+                        cacheCreation: cacheWrite,
+                        reportedCostUSD: nonnegativeDouble(object["cost"]),
+                        sessionId: opaque(prefix: "opencode-session-v1", raw: session),
+                        messageId: opaque(prefix: "opencode-message-v1", raw: message),
+                        requestId: requestKey,
+                        sourceKey: opaque(prefix: "opencode-db-v1", raw: database.path)
+                    )
+                )
+            }
         }
         return events
     }
@@ -482,21 +484,11 @@ enum CodeCLIUsageScanner {
         process.standardInput = nil
         do { try process.run() } catch { return false }
 
-        var buffer = Data()
-        while true {
-            guard let chunk = try? pipe.fileHandleForReading.read(upToCount: 64 * 1024),
-                  !chunk.isEmpty
-            else { break }
-            buffer.append(chunk)
-            while let newline = buffer.firstIndex(of: 0x0A) {
-                let line = buffer[..<newline]
-                if !line.isEmpty { body(Data(line)) }
-                buffer.removeSubrange(...newline)
-            }
-        }
-        if !buffer.isEmpty { body(buffer) }
+        defer { try? pipe.fileHandleForReading.close() }
+        let didRead = CostUsageLineReader.forEachLine(from: pipe.fileHandleForReading, body)
+        if !didRead, process.isRunning { process.terminate() }
         process.waitUntilExit()
-        return process.terminationStatus == 0
+        return didRead && process.terminationStatus == 0
     }
 
     // MARK: - Helpers

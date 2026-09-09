@@ -804,9 +804,11 @@ capture against § 8 before committing it — a screenshot is source content.
   quota buckets their own file: `quota_field_registry.json`, written by
   `QuotaService` when an adapter returns a bucket the static
   `MenuBarFieldCatalog` doesn't list.
-- **JSONL parsing must be O(n).** Go through
-  `CostUsageScanner.forEachJSONLLine`, which forwards to the package's
-  `JSONLLineScanner.forEachLine`: a moving cursor, not `removeSubrange`.
+- **JSONL parsing must be O(n).** Cost scans go through
+  `CostUsageScanner.forEachJSONLLine` and `CostUsageLineReader`: a moving
+  cursor across read chunks, with autorelease pools around each read and
+  parsed record. Compressed cost logs use the same stream reader. Session
+  transcripts continue to use the package's `JSONLLineScanner`.
 
 ### 7.1 Provider and harness naming
 

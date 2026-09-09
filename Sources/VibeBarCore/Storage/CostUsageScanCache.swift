@@ -230,9 +230,11 @@ public struct CostUsageScanCache: Codable, Sendable {
 
     // MARK: - Disk I/O
 
-    /// 64 MB safety cap. The cache for a heavy user with several years of
-    /// Codex / Claude history is usually under 10 MB.
-    private static let maxFileBytes: Int = 64 * 1024 * 1024
+    /// Allow large privacy-safe histories: 135k Claude events already exceed
+    /// 64 MiB. Rejecting a cache we just wrote forced a full history reparse
+    /// on every refresh. Keep a finite corruption guard with room for these
+    /// stores, and map the input instead of copying the encoded cache.
+    static let maxFileBytes: Int = 256 * 1024 * 1024
     /// v3 adds `ParsedEvent.serviceTier` (Claude fast-tier billing) and
     /// fast-multiplier cost semantics; bumping forces a one-time
     /// re-parse so historical events pick up the new field.
@@ -277,7 +279,7 @@ public struct CostUsageScanCache: Codable, Sendable {
            size > maxFileBytes {
             return CostUsageScanCache(retentionDays: normalizedRetentionDays)
         }
-        guard let data = try? Data(contentsOf: url),
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
               let cache = try? JSONDecoder().decode(CostUsageScanCache.self, from: data)
         else {
             return CostUsageScanCache(retentionDays: normalizedRetentionDays)

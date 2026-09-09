@@ -2,6 +2,20 @@
 
 Notable changes to Code CLI Bar are recorded here. Dates use YYYY-MM-DD.
 
+## 1.6.1 - 2026-09-09
+
+### Fixes
+
+- Release temporary log-parsing objects after each record and input read,
+  reducing memory spikes during background usage refreshes. Apply the same
+  streaming reader to compressed DeepSeek histories and drain OpenCode's
+  temporary JSON objects per database row.
+- Keep valid usage caches between 64 and 256 MiB reusable, avoiding a full
+  history scan on every refresh for large Claude Code installations. Map
+  cache input to avoid an extra in-memory copy.
+- Scan long log records with a persistent cursor so records spanning read
+  chunks are processed in linear time.
+
 ## 1.6.0 - 2026-09-07
 
 ### Fixes
